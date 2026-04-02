@@ -6,7 +6,9 @@
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "dev": "nodemon server.js"
+    "dev": "nodemon server.js",
+    "serve": "firebase emulators:start --project tk-archive-cd9d0",
+    "deploy": "firebase deploy --project tk-archive-cd9d0 --only hosting,functions"
   },
   "dependencies": {
     "cookie-session": "^2.0.0",

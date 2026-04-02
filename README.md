@@ -42,9 +42,37 @@ Google Drive için basit bir arşiv sistemi. Bu proje, Google Drive içeriğini 
 
 ## Dosya Yapısı
 
-- `server.js` - Express backend ve Google Drive entegrasyonu
+- `server.js` - yerel Express backend ve Google Drive entegrasyonu
 - `public/` - ön yüz HTML, CSS, JavaScript
-- `data/db.json` - taranan dosya metadata depolaması
+- `data/db.json` - yerelde taranan dosya metadata depolaması
+- `functions/` - Firebase Functions API sunucusu
+- `firebase.json` - Firebase Hosting ve Functions yapılandırması
+- `.firebaserc` - Firebase projesi ayarı
+
+## Firebase Dağıtımı
+
+1. Firebase CLI ile proje ayarının yüklü olduğundan emin olun:
+   ```bash
+   firebase login
+   firebase use tk-archive-cd9d0
+   ```
+
+2. Firebase Functions için Google OAuth bilgilerini ayarlayın (projenizde gizli bilgileri saklamak için):
+   ```bash
+   firebase functions:config:set google.client_id="YOUR_CLIENT_ID" google.client_secret="YOUR_CLIENT_SECRET" base_url="https://tk-archive-cd9d0.web.app" session_key="YOUR_SESSION_KEY"
+   ```
+
+3. Firestore'u projede aktifleştirin. Firebase konsolunda `Firestore Database` bölümüne gidin ve veritabanını oluşturun.
+
+4. Deploy edin:
+   ```bash
+   npm run deploy
+   ```
+
+5. Eğer yerelde Firebase emülatörlerini çalıştırmak isterseniz:
+   ```bash
+   npm run serve
+   ```
 
 ## Notlar
 
