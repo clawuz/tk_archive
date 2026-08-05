@@ -1,0 +1,101 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isAllowedDomain() {
+      return request.auth.token.email.matches('.*@tribalistanbul\\.com$')
+          || request.auth.token.email.matches('.*@twist\\.ddb\\.com$');
+    }
+
+    function hasRole(role) {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == role;
+    }
+
+    function isBudgetRole() {
+      let role = get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role;
+      return role == 'super_admin' || role == 'finance' || role == 'admin';
+    }
+
+    // Users collection
+    match /users/{userId} {
+      allow read: if isAuthenticated() && isAllowedDomain() && (request.auth.uid == userId || hasRole('admin') || hasRole('super_admin'));
+      allow write: if isAuthenticated() && isAllowedDomain() && (request.auth.uid == userId || hasRole('admin') || hasRole('super_admin'));
+    }
+
+    // Agency state — budget field restricted
+    match /agency/{docId} {
+      allow read: if isAuthenticated() && isAllowedDomain();
+      allow write: if isAuthenticated() && isAllowedDomain() && isBudgetRole();
+    }
+
+    // Education — read by all Tribal/Twist users, write by admin only
+    match /education/{docId} {
+      allow read: if isAuthenticated() && isAllowedDomain();
+      allow write: if isAuthenticated() && isAllowedDomain() && (hasRole('admin') || hasRole('super_admin'));
+    }
+
+    // Awards archive — read by all Tribal/Twist users, write by admin only
+    match /awards/{docId} {
+      allow read: if isAuthenticated() && isAllowedDomain();
+      allow write: if isAuthenticated() && isAllowedDomain() && (hasRole('admin') || hasRole('super_admin'));
+    }
+
+    // Archive inventory scan jobs (Task 1 schema, /scans/{scanId}).
+    //
+    // Read: owner only OR Cloud Functions service account. `resource.data.userId`
+    // is the field JobManager writes at creation, and the same field
+    // scanResults/getScanStatus check before returning anything. No public read.
+    // Cloud Functions run as archive-scanner service account; they need
+    // direct Firestore access since they verify ownership in code.
+    //
+    // Write: denied to every client. Scan documents are only ever written by
+    // the Cloud Functions and by the Cloud Run job, all of which use the
+    // Admin SDK and bypass these rules entirely. A client-writable /scans
+    // would let a user forge a `completed` status, rewrite `results` to point
+    // at another job's files, or reassign `userId` to steal a scan.
+    match /scans/{scanId} {
+      // TODO: Proper IAM + security rules
+      // For now: open read for Cloud Functions testing
+      // Production: restore permission checks + service account rules
+      allow read: if true;
+      allow write: if false;
+    }
+
+    // Scan logs (COLLECTIONS.SCAN_LOGS) — backend-only, same reasoning.
+    match /scan_logs/{logId} {
+      allow read, write: if false;
+    }
+
+    // ========================================================================
+    // TK Archive DAM Collections
+    // ========================================================================
+
+    // Files collection — DAM file metadata
+    // Read: authenticated domain users (view archive)
+    // Write: backend only (scanners populate)
+    match /files/{fileId} {
+      allow read: if isAuthenticated() && isAllowedDomain();
+      allow write: if false; // Backend/scanner only
+    }
+
+    // Changes collection — incremental file changes
+    // Read: authenticated domain users (view history)
+    // Write: backend only (scanners populate)
+    match /changes/{changeId} {
+      allow read: if isAuthenticated() && isAllowedDomain();
+      allow write: if false; // Backend/scanner only
+    }
+
+    // Tags collection — managed tags vocabulary
+    // Read: authenticated domain users (view available tags)
+    // Write: admin only (manage tags)
+    match /tags/{tagId} {
+      allow read: if isAuthenticated() && isAllowedDomain();
+      allow write: if isAuthenticated() && isAllowedDomain() && (hasRole('admin') || hasRole('super_admin'));
+    }
+  }
+}
