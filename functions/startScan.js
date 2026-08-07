@@ -16,15 +16,13 @@ const VALID_SCAN_TYPES = Object.values(SCAN_TYPES);
  */
 function createStartScanHandler(overrides = {}) {
   return async function startScan(data, context) {
-    // Test mode bypass
-    const userId = context?.auth?.uid || (data?.testMode ? 'test-user' : null);
-
-    if (!userId) {
+    if (!context.auth) {
       throw new functions.https.HttpsError(
         'unauthenticated',
         'Bu işlemi gerçekleştirmek için giriş yapmalısınız.'
       );
     }
+    const userId = context.auth.uid;
 
     const { archiveRoot, scanType } = data || {};
 

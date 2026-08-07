@@ -93,11 +93,9 @@ export default function DAMDashboard() {
 
     try {
       const startScan = httpsCallable(functions, 'startScan')
-      const params = new URLSearchParams(window.location.search)
       const result = await startScan({
         archiveRoot: archiveRoot.trim(),
-        scanType: scanSource,
-        testMode: params.get('testMode') === 'true'
+        scanType: scanSource
       })
 
       // Poll for status

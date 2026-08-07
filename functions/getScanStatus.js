@@ -11,15 +11,13 @@ const { getServiceAccountEmail, getProjectId } = require('./lib/cloudRunTrigger'
  */
 function createGetScanStatusHandler(overrides = {}) {
   return async function getScanStatus(data, context) {
-    // Test mode bypass
-    const userId = context?.auth?.uid || (data?.testMode ? 'test-user' : null);
-
-    if (!userId) {
+    if (!context.auth) {
       throw new functions.https.HttpsError(
         'unauthenticated',
         'Bu işlemi gerçekleştirmek için giriş yapmalısınız.'
       );
     }
+    const userId = context.auth.uid;
 
     const { jobId } = data || {};
     if (typeof jobId !== 'string' || jobId.trim() === '') {
