@@ -47,8 +47,8 @@ export async function resolveThumbnail(file: DAMFile): Promise<ThumbnailResult> 
 
   // Store in cache (with size limit)
   if (thumbnailCache.size >= CACHE_SIZE_LIMIT) {
-    const firstKey = thumbnailCache.keys().next().value;
-    thumbnailCache.delete(firstKey);
+    const firstKey = thumbnailCache.keys().next().value as string;
+    if (firstKey) thumbnailCache.delete(firstKey);
   }
   thumbnailCache.set(cacheKey, result);
 

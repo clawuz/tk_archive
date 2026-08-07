@@ -4,7 +4,12 @@ import { doc, getDoc } from 'firebase/firestore'
 import { auth, db } from '../firebase'
 import { isAllowedDomain } from './domainCheck'
 
-const AuthContext = createContext(null)
+const AuthContext = createContext({
+  user: null,
+  userProfile: null,
+  loading: true,
+  domainError: false,
+})
 
 export function AuthProvider({ children }) {
   const [user, setUser] = useState(null)

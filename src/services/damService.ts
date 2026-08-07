@@ -14,8 +14,6 @@ import {
   where,
   orderBy,
   limit,
-  Query,
-  DocumentSnapshot,
   Timestamp,
 } from 'firebase/firestore'
 import { db } from '../firebase'
@@ -84,7 +82,6 @@ function enrichFile(file: DAMFile): DAMFileUI {
 export async function searchFiles(
   filters: DAMSearchFilters
 ): Promise<{ files: DAMFileUI[]; total: number }> {
-  let q: Query = collection(db, FILES_COLLECTION)
   const queryConstraints = []
 
   // Build query constraints
