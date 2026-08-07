@@ -75,21 +75,24 @@ service cloud.firestore {
     // ========================================================================
 
     // Files collection — DAM file metadata
-    // Temporarily open for testing
+    // Authenticated-only access; backend writes via scanner
     match /files/{fileId} {
-      allow read, write: if true;
+      allow read: if isAuthenticated() && isAllowedDomain();
+      allow write: if false; // Only backend writes via scanner
     }
 
     // Changes collection — incremental file changes
-    // Temporarily open for testing
+    // Authenticated-only access; backend writes via scanner
     match /changes/{changeId} {
-      allow read, write: if true;
+      allow read: if isAuthenticated() && isAllowedDomain();
+      allow write: if false; // Only backend writes via scanner
     }
 
     // Tags collection — managed tags vocabulary
-    // Temporarily open for testing
+    // Authenticated-only access; backend writes via scanner
     match /tags/{tagId} {
-      allow read, write: if true;
+      allow read: if isAuthenticated() && isAllowedDomain();
+      allow write: if false; // Only backend writes via scanner
     }
   }
 }
