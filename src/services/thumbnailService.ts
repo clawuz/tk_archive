@@ -20,15 +20,23 @@ export async function resolveThumbnail(file: DAMFile): Promise<ThumbnailResult> 
 
   let result: ThumbnailResult;
 
-  // Priority 1: Firestore stored thumbnail
-  if (file.thumbnail?.url) {
+  // Priority 1: Video preview frame (first frame as thumbnail)
+  if (file.videoPreviewFrames?.length > 0) {
+    result = {
+      url: `data:image/jpeg;base64,${file.videoPreviewFrames[0].frameData}`,
+      source: 'firestore',
+      cached: false
+    };
+  }
+  // Priority 2: Firestore stored thumbnail
+  else if (file.thumbnail?.url) {
     result = {
       url: file.thumbnail.url,
       source: 'firestore',
       cached: false
     };
   }
-  // Priority 2: Google Drive native thumbnails
+  // Priority 3: Google Drive native thumbnails
   else if (file.source === 'drive' && file.driveFileId) {
     result = {
       url: `https://drive.google.com/thumbnail?id=${file.driveFileId}&sz=w200`,
@@ -36,7 +44,7 @@ export async function resolveThumbnail(file: DAMFile): Promise<ThumbnailResult> 
       cached: false
     };
   }
-  // Priority 3: Fallback to placeholder
+  // Priority 4: Fallback to placeholder
   else {
     result = {
       url: null,
