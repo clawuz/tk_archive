@@ -66,6 +66,17 @@ export interface DAMFile {
   // Preview fields (Tasks 1-4)
   streamable?: boolean
   previewUrl?: string
+  videoPreviewFrames?: Array<{
+    timestamp: number
+    frameData: string
+    frameNumber: number
+  }>
+
+  // YOLO tagging (Task 10)
+  needs_tagging?: boolean // Flag for YOLO processing
+  tagSource?: string // 'yolo-local' | other sources
+  taggedAt?: number // timestamp when tags were auto-generated
+  taggedBy?: string // userId who triggered tagging
 
   // Scan tracking
   scanId: string
