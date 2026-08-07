@@ -85,12 +85,9 @@ export async function searchFiles(
   const queryConstraints = []
 
   // Build query constraints
-  if (filters.sources && filters.sources.length === 1) {
-    // Query by specific source for efficiency
-    queryConstraints.push(where('source', '==', filters.sources[0]))
-  } else if (filters.sources && filters.sources.length > 1) {
-    // Multiple sources: fetch all and filter in app
-    queryConstraints.push(where('source', 'in', filters.sources))
+  if (filters.sources && filters.sources.length > 0) {
+    // Query by source - fetch all and filter in app for simplicity
+    // Firestore 'in' with orderBy requires composite index; post-filter instead
   }
 
   if (filters.tags && filters.tags.length > 0) {
