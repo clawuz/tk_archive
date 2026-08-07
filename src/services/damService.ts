@@ -124,6 +124,10 @@ export async function searchFiles(
       if (data.uploadedAt && typeof data.uploadedAt === 'object' && 'toMillis' in data.uploadedAt) {
         data.uploadedAt = (data.uploadedAt as any).toMillis()
       }
+      // Default source to 'drive' for Google Drive files without source field
+      if (!data.source) {
+        data.source = 'drive'
+      }
       return enrichFile(data)
     })
 
