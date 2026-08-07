@@ -3,7 +3,7 @@ import ThumbnailCard from './ThumbnailCard'
 
 export default function FileGallery({ files, onFileSelect, loading }) {
   const [displayFiles, setDisplayFiles] = useState([])
-  const [visibleCount, setVisibleCount] = useState(50)
+  const [visibleCount, setVisibleCount] = useState(600) // Show all files (552+)
 
   useEffect(() => {
     setDisplayFiles(files.slice(0, visibleCount))

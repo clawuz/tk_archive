@@ -1,0 +1,9 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "tk-archive-preview",
+      "url": "http://localhost:4173"
+    }
+  ]
+}

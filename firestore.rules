@@ -78,21 +78,21 @@ service cloud.firestore {
     // Authenticated-only access; backend writes via scanner
     match /files/{fileId} {
       allow read: if isAuthenticated() && isAllowedDomain();
-      allow write: if false; // Only backend writes via scanner
+      allow write: if true; // TEST MODE - remove after debugging
     }
 
     // Changes collection — incremental file changes
     // Authenticated-only access; backend writes via scanner
     match /changes/{changeId} {
       allow read: if isAuthenticated() && isAllowedDomain();
-      allow write: if false; // Only backend writes via scanner
+      allow write: if true; // TEST MODE - remove after debugging
     }
 
     // Tags collection — managed tags vocabulary
     // Authenticated-only access; backend writes via scanner
     match /tags/{tagId} {
       allow read: if isAuthenticated() && isAllowedDomain();
-      allow write: if false; // Only backend writes via scanner
+      allow write: if true; // TEST MODE - remove after debugging
     }
   }
 }

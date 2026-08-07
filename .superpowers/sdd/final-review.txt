@@ -1,0 +1,480 @@
+## Final Whole-Branch Review
+
+### Summary
+
+14 feature commits plus one squash-style final commit (`c71eb81..e4acaae`) touching 27 files
+(+3753/-338, of which ~3200 lines are package-lock churn). The work adds four frontend
+features (thumbnail cards, video preview, file download, folder breadcrumbs) built on four
+new services/utils (`thumbnailService.ts`, `streamingService.ts`, `pathResolver.ts`,
+`fileIcons.ts`), one new Cloud Function (`functions/download.js`), and a project migration
+from `tk-archive-cd9d0` to `tk-archive-dam`.
+
+The individual task reviews assessed each task in isolation. Looking at the branch as a
+whole — which is what this review is for — the picture is materially different. The feature
+code itself is mostly reasonable. The surrounding changes are not: this branch disables
+authentication in four separate places, opens the production database to the world, commits
+a live service-account private key, silently reverts a documented IAM hardening, and ships
+two of the five features in a state where they cannot work in production. It also breaks an
+existing test suite that was written specifically to catch one of these regressions.
+
+I could not run the test suite (the vendored `vitest` binary in `functions/node_modules/.bin`
+is corrupt — it resolves to a non-existent `dist/cli.js`). I verified the failing assertions
+by executing the same checks directly against `functions/index.js` with plain Node; results
+are quoted under Deployment below.
+
+---
+
+### Architecture & Integration: ⚠️ ISSUES
+
+**All five outputs are present and wired into `FileDetail.jsx`**, and the component
+composition is clean — `VideoPreview`, `FolderBrowser`, and `FileDownload` are each
+self-contained, take `file` as their only required prop, and self-hide when not applicable.
+No circular dependencies. Services/components/types separation is respected.
+
+Integration problems:
+
+**A1 (blocker) — Task 2 and Task 3 cannot reach a backend in production.**
+`firebase.json` rewrites `/api/**` to a function named `api`:
+```
+{ "source": "/api/**", "function": "api" }
+```
+No such function exists. `functions/index.js` exports `download, getScanStatus, scanResults,
+startScan, startScanScheduled` (verified). So `pathResolver.resolvePath()` returns
+`/api/download?...`, which the rewrite hands to a nonexistent function.
+
+Worse, `streamingService.getStreamUrl()` points local video at `/api/stream` — there is no
+`stream` function anywhere in the repo at all. Local video preview was never implemented
+server-side.
+
+And even with correct routing, `functions/download.js` calls
+`fs.existsSync('/Users/okilavuz/Desktop/Omer/TK-2026/...')` inside a Cloud Functions
+container. That path is a developer's laptop. Serving local-filesystem archive files from
+Cloud Functions is architecturally impossible — the function has no access to the 50TB
+archive volume. This needs a different design (signed GCS URLs, or an on-prem agent), not a
+bug fix.
+
+Net effect: for `source === 'local'` files, download and video preview are non-functional.
+Only the Drive paths (`window.open` to Drive, Drive `/preview` iframe) actually work.
+
+**A2 (blocker) — `FolderBrowser.jsx` violates the Rules of Hooks and will crash the panel.**
+```jsx
+export default function FolderBrowser({ file, onNavigate }) {
+  if (file?.source !== 'local') return null;   // early return...
+  const filePath = file?.path || '';
+  const breadcrumbs = useMemo(() => { ... }, [filePath]);  // ...before a hook
+```
+The component renders 0 hooks for a Drive file and 1 hook for a local file. `FolderBrowser`
+stays mounted in `FileDetail` across file selections (same tree position, no `key`), so
+selecting a Drive file and then a local file changes the hook count on an already-mounted
+component. React throws *"Rendered more hooks than during the previous render"* and the
+detail panel unmounts. This is a reproducible crash on a normal user path, and it is
+exactly the kind of cross-task interaction a whole-branch review exists to catch — each
+task in isolation looks fine.
+
+**A3 — Task 4's navigation is a stub.** `FileDetail.handleFolderNavigate` is:
+```js
+console.log('Navigate to folder:', path)
+onShowPreview?.(null)
+```
+The breadcrumbs render and are clickable but navigate nowhere. Task 4 is cosmetic as
+merged.
+
+**A4 — Gallery feature regression.** `ThumbnailCard` replaced `FileCard` but dropped the
+source badge, the expired-license warning badge, the tag chips, and the always-visible
+size/date row. Those are now hover-only overlay text. The expired-license badge in
+particular was a compliance affordance; `isExpired` is still computed in `damService` and
+now has no consumer.
+
+---
+
+### Security: ⚠️ CONCERNS — several critical, production-live
+
+This is the section that decides the verdict. These are not theoretical.
+
+**S1 (critical) — A live service-account private key is committed to the repository.**
+`functions/config/serviceAccountKey.json` is a new file in this branch containing a
+complete RSA private key for `firebase-adminsdk-fbsvc@tk-archive-dam.iam.gserviceaccount.com`
+(type `service_account`, with `private_key_id` and full PEM body). I confirmed it is
+**tracked, not ignored**:
+```
+$ git check-ignore -v functions/config/serviceAccountKey.json  → NOT IGNORED
+$ git ls-files functions/config/                                → functions/config/serviceAccountKey.json
+```
+`.gitignore` covers `.env*` but has no rule for `serviceAccountKey.json` or `functions/config/`.
+This key grants full Firebase Admin access to the project — it bypasses all Firestore rules.
+
+This should be treated as a credential-disclosure incident, not a code-review nit:
+the key needs to be **revoked and rotated in the Google Cloud console first**, then purged
+from git history, then the path added to `.gitignore`. Rotating is required even if the repo
+is private, because the key is now in every clone and in the reflog.
+
+**S2 (critical) — Production Firestore rules were opened to the public.**
+```
+match /files/{fileId}  { allow read, write: if true; }
+match /changes/{changeId} { allow read, write: if true; }
+match /tags/{tagId}    { allow read, write: if true; }
+```
+This replaced `read: isAuthenticated() && isAllowedDomain()` and `write: if false`. The
+comment says "Temporarily open for testing" — but the Task 5 report confirms
+*"Firestore rules compiled and deployed"* to production. Anyone on the internet who knows
+the project ID can currently read the entire DAM catalog and **delete or overwrite every
+document in it**. `write: if true` on a collection that was previously backend-only is the
+sharpest edge here: there is no recovery path from a mass overwrite other than backups.
+
+**S3 (critical) — Client-side auth bypass shipped to production.**
+`src/auth/AuthProvider.jsx`:
+```js
+const params = new URLSearchParams(window.location.search)
+if (params.get('testMode') === 'true') {
+  setUser({ uid: 'test-user', email: 'test@tribalistanbul.com' })
+  setUserProfile({ role: 'admin', department: 'archive' })
+  setLoading(false)
+  return
+}
+```
+`https://tk-archive-dam.web.app/?testMode=true` grants any visitor an admin session with the
+domain check skipped. Combined with S2 (which removes the server-side backstop that would
+normally make a client-side bypass merely cosmetic), this is full unauthenticated admin
+access to the application.
+
+**S4 (critical) — Server-side auth bypass in two callables.**
+`startScan.js` and `getScanStatus.js`:
+```js
+const userId = context?.auth?.uid || (data?.testMode ? 'test-user' : null);
+```
+`data` is the caller-supplied request body. Any unauthenticated caller can pass
+`{ testMode: true }` and get through the `unauthenticated` guard. For `startScan` this means
+an anonymous party can trigger Cloud Run scan jobs against an arbitrary `archiveRoot` —
+billable compute, driven by an attacker-chosen path.
+
+`functions/tests/api.test.js` asserts these calls reject with `code: 'unauthenticated'`. Those
+tests only cover the no-auth-no-testMode case, so they pass while the bypass ships — worth
+noting because green tests here do *not* mean the auth guard is intact.
+
+**S5 (critical) — The download endpoint has no authentication and weak path validation.**
+`functions/download.js` is `functions.https.onRequest` with **no auth check whatsoever** —
+not `context.auth`, not an API key, not an App Check token. It takes a filesystem path from
+a query parameter and streams the file back. The only gate is:
+```js
+function validatePath(filePath) {
+  const normalized = path.normalize(filePath);
+  return ALLOWED_PATHS.some(basePath => normalized.startsWith(basePath));
+}
+```
+Three problems:
+- `startsWith` is a **prefix match, not a path-boundary match**. `/Volumes` admits
+  `/Volumes-backup`, `/Volumes_private`, etc. The allowlist should compare against
+  `basePath + path.sep` or use `path.relative()` and reject results starting with `..`.
+- **No symlink resolution.** `path.normalize` is purely lexical. A symlink placed under an
+  allowed root points anywhere on the filesystem and passes validation. This needs
+  `fs.realpathSync()` *before* the allowlist check.
+- `/Volumes` as an allowlist entry is extremely broad — it is every mounted volume on a Mac.
+
+Directory traversal via literal `../` *is* correctly blocked, because `path.normalize`
+collapses the segments before the prefix check. Credit where due — that specific attack
+fails. The three issues above are what remain.
+
+**S6 — Documented IAM hardening silently reverted.** Every `runWith({ serviceAccount })` was
+removed from `startScan`, `getScanStatus`, `scanResults`, and `startScanScheduled`, along
+with the multi-paragraph comments explaining why each one was load-bearing. See Deployment
+below for the verified runtime effect.
+
+**S7 (pre-existing, but this branch touched the file)** — `functions/create-user.js` contains
+a hardcoded password (`'19331933'`) for a named user. Not introduced here, but the file was
+modified in this branch and the credential should come out.
+
+On the checklist's positive items: the Google Drive integration does use official endpoints
+(`drive.google.com/file/d/{id}/preview` and `/thumbnail?id=`), and the Firebase web API key
+in `src/firebase.js` is a public identifier, not a secret — that one is fine.
+
+---
+
+### Performance: ⚠️ OPPORTUNITIES
+
+**Genuinely good:** the `IntersectionObserver` in `ThumbnailCard` with `rootMargin: '100px'`
+is a correct lazy-loading implementation — it unobserves on first intersection and
+disconnects on unmount. That is the Task 1 requirement, properly met.
+
+**P1 (significant) — `FileDownload` buffers entire files in memory.**
+```js
+const chunks = []
+while (true) { const {done, value} = await reader.read(); if (done) break; chunks.push(value) }
+const blob = new Blob(chunks, { type: file.mimeType })
+```
+Every byte is held in the tab before the download starts. This is a DAM for a 50TB archive
+with multi-GB video masters — this will OOM the tab. The irony is that `streamingService`
+already exports `isFileTooLarge()` (2GB threshold) and `FileDownload` never calls it. The
+fix is to drop the manual reader entirely and let the browser stream to disk via a plain
+anchor/`Content-Disposition`, accepting the loss of the progress bar; or use the File System
+Access API where available.
+
+**P2 — The thumbnail cache caches almost nothing.** `thumbnailService.resolveThumbnail` is
+`async` but performs no I/O — it just picks a URL from three branches. The `Map` cache with
+FIFO eviction at 100 entries therefore memoizes a handful of string concatenations, while
+the actual expense (fetching the image) is left to the browser's HTTP cache. Harmless, but
+it is not the caching layer it appears to be, and the eviction makes it useless past 100
+files in a gallery that pages 50 at a time.
+
+**P3 — Re-render risk in `ThumbnailCard`.** `useEffect(..., [isVisible, file])` depends on
+`file`, which `damService.enrichFile` recreates as a fresh object on every load. Any parent
+re-render that re-runs the query re-fires the effect for every visible card. The cache
+absorbs the cost today, but the dependency should be `file.fileId`.
+
+**P4 — Server SDKs added to frontend dependencies.** `package.json` now lists
+`firebase-admin`, `googleapis`, and `google-auth-library` under `dependencies` (not
+`devDependencies`). These are Node-only server SDKs. They are presumably for the untracked
+`scanner.cjs`, but as declared they are frontend deps; any accidental import pulls a
+server-side auth library into the browser bundle, which is both a size and a security
+problem. Bundle is already 649 kB.
+
+`Accept-Ranges: bytes` is set in `download.js` but range requests are not actually honored
+(`fs.createReadStream` with no `start`/`end`), so seeking in a large video would misbehave —
+moot for now given A1.
+
+---
+
+### User Experience: ⚠️ GAPS
+
+**Dark mode is consistently handled** across all four new components — `ThumbnailCard`,
+`VideoPreview`, `FileDownload`, and `FolderBrowser` all pair light and `dark:` variants on
+backgrounds, borders, and text, and the Task 2 fix round's dark-mode work holds up. This
+part of the checklist genuinely passes.
+
+**U1 — Keyboard accessibility regressed.** The removed `FileCard` was a `<button>`. Its
+replacement is:
+```jsx
+<div ref={imageRef} onClick={() => onSelect?.(file)} className="...cursor-pointer...">
+```
+A `div` with `onClick` is not focusable, not keyboard-activatable, and announces nothing to
+a screen reader. The entire gallery — the primary navigation surface of the app — is now
+mouse-only. This should be a `<button>` (or carry `role="button"`, `tabIndex={0}`, and an
+`onKeyDown` handler) with a visible `focus-visible:` ring.
+
+**U2 — Language inconsistency.** The application UI is Turkish throughout. The new
+components emit English: `"Cannot download this file"`, `"Download failed: ..."`,
+`"File too large (...). Download to play locally."`, `"Unable to preview this video"`,
+`"Download"`, `"Open in Google Drive"`, `"Parent directory"`. Mixed-language UI in the same
+panel.
+
+**U3 — Raw error strings surfaced to users.** `setError(err.message)` in `FileDownload`
+renders whatever the fetch layer produced. Given A1, the realistic user-visible outcome
+today is an unstyled network or JSON-parse error, not an actionable message.
+
+**U4 — Breadcrumbs render the full absolute path including the file itself.**
+`FolderBrowser` splits `file.path` on `/` and makes every segment a crumb, so the last crumb
+is the filename, presented as a navigable folder. It also exposes the developer's home
+directory structure (`Users / okilavuz / Desktop / ...`) in the UI. Should drop the basename
+and probably render relative to the archive root.
+
+Loading states are good: the skeleton pulse in `ThumbnailCard` and the spinner + percentage
++ progress bar in `FileDownload` are both clean, and the progress bar is correctly gated on
+`content-length` being present.
+
+---
+
+### Code Quality: ⚠️ FINDINGS
+
+**Q1 (blocker) — "0 TypeScript errors" is not a verified claim.** The Task 5 report states
+*"Build completed with 0 TypeScript errors"* and *"No TypeScript compilation issues"*. I
+checked:
+- There is **no `tsconfig.json`** anywhere in the repo.
+- **TypeScript is not a dependency** — it appears in neither `package.json` nor the lockfile.
+- `npm run build` is `vite build`, which transpiles `.ts` via esbuild. **esbuild strips types
+  without checking them.**
+
+So no type check has ever run on this codebase. The build succeeding says nothing about type
+correctness, and the reported evidence for Task 5's primary deliverable does not exist. As a
+concrete example, `src/utils/fileIcons.ts` does `FILE_TYPE_ICONS[mimeType]` where the object
+is an untyped literal with no index signature — that is a `noImplicitAny` error under any
+real strict check. Adding `tsconfig.json` + `typescript` and a `typecheck` script would make
+this claim meaningful; until then it should not be asserted.
+
+**Q2 — No linting.** No `.eslintrc*` or `eslint.config.*`. `eslint-plugin-react-hooks` would
+have caught A2 (the conditional `useMemo`) automatically. This is the cheapest possible fix
+for the most severe frontend bug in the branch.
+
+**Q3 — Stale closure in `handleRerunScan`.**
+```js
+setScanSource(scan.source || scan.scanType)
+setArchiveRoot(scan.archiveRoot || '')
+setTimeout(() => handleStartScan(), 0)
+```
+The comment claims the `setTimeout` lets "the state settle." It does not. The scheduled
+callback closes over the *current* render's `handleStartScan`, which reads the *pre-update*
+`archiveRoot` and `scanSource`. Re-running a scan sends the previously selected root, and if
+`archiveRoot` was empty it trips the new `if (!archiveRoot.trim())` guard for the wrong
+reason. The pattern was arguably survivable before this branch; adding a required
+`archiveRoot` field makes it actively wrong. Pass the values as arguments instead of routing
+them through state.
+
+**Q4 — Copy-pasted Timestamp conversion.** The identical nine-line
+`if (data.X && typeof data.X === 'object' && 'toMillis' in data.X)` block appears twice in
+`damService.ts` (in `searchFiles` and `getFile`), covering three fields each, while a
+`convertTimestamp()` helper doing the same job is defined 100 lines below and used only for
+scans. One helper, applied everywhere. The `(data.X as any)` casts also defeat the typing the
+file otherwise maintains.
+
+**Q5 — Leftover `console.log`.** `FileDetail.jsx:19`. It is the stub from A3, so removing the
+log and implementing the handler are the same fix.
+
+**Q6 — Duplicate byte formatter.** `streamingService.getFileSize()` duplicates
+`damService.formatFileSize()` with different rounding (`toFixed(2)` vs. the existing
+implementation), so the same file shows two different sizes in the detail panel depending on
+which component rendered it.
+
+**Q7 — Hardcoded personal path in shipped source.**
+`src/services/pathResolver.ts` and `functions/download.js` both hardcode
+`/Users/okilavuz/Desktop/Omer/TK-2026`, and `DAMDashboard.jsx` uses it as the default
+`archiveRoot` state. A developer's home directory is now the production allowlist. This
+belongs in config/env.
+
+**Q8 — Zero tests added.** Five features, ~450 lines of new logic, no tests. `pathResolver`'s
+`validatePath` and `getParentDirectory` and `streamingService`'s `canStream`/`isFileTooLarge`
+are pure functions — they are trivially testable and are exactly the security-relevant logic
+that most needs coverage. The repo already has vitest configured for `functions/`.
+
+**Q9 — Minor `ThumbnailCard` cleanup.** `observer.unobserve(imageRef.current)` inside the
+callback can throw if the ref has been nulled by an unmount racing the intersection; the
+`observer.disconnect()` in cleanup already covers this, so the `unobserve` line can go.
+`resolveThumbnail` is `async` but never awaits anything.
+
+Naming and file organization are otherwise consistent, and the services/components/types
+split is clean.
+
+---
+
+### Deployment: ❌ ISSUES
+
+**D1 — The existing test suite is now failing.** I could not run vitest (the vendored binary
+is broken — `Cannot find module '.../node_modules/.bin/dist/cli.js'`, itself worth fixing),
+so I executed `deployedFunctions.test.js`'s assertions directly:
+
+```
+$ GCLOUD_PROJECT=test-project node -e "...require('./index.js')..."
+exports: download,getScanStatus,scanResults,startScan,startScanScheduled
+expected by test: getScanStatus,scanResults,startScan,startScanScheduled
+startScan          -> serviceAccountEmail = ResetValue {}
+getScanStatus      -> serviceAccountEmail = ResetValue {}
+scanResults        -> serviceAccountEmail = ResetValue {}
+startScanScheduled -> serviceAccountEmail = ResetValue {}
+```
+
+That is **5 failing assertions**: the exact-exports check (now includes `download`), plus all
+four parameterized `serviceAccountEmail` checks, which expect
+`archive-scanner@test-project.iam.gserviceaccount.com` and get `ResetValue {}` — the
+firebase-functions sentinel meaning *"explicitly reset to the platform default."* The four
+functions now run as the default App Engine service account.
+
+The header comment of the very test that this branch breaks says:
+
+> *"getScanStatus and scanResults were missing runWith({ serviceAccount }), leaving them on
+> the default App Engine service account while terraform/main.tf grants Firestore and
+> results-bucket access to archive-scanner alone."*
+
+listed as a defect that *"has already happened once in this project."* This branch
+reintroduced that exact regression and deleted the comments documenting why it mattered. Per
+those comments, on projects where the
+`constraints/iam.automaticIamGrantsForDefaultServiceAccounts` org policy is enforced, the
+scan functions will lose Firestore and results-bucket access entirely. The Task 5 report's
+*"All functions deployed successfully"* is consistent with this — deploy success does not
+exercise the IAM path.
+
+**D2 — The branch is already on `main` and already in production.** `git branch --show-current`
+returns `main`; the 15 commits are on it, and Task 5 deployed hosting, functions, and the
+Firestore rules to `tk-archive-dam`. So the merge question is partly moot — S1 through S5 are
+live right now. This also means the remediation order matters: **rotate the key and restore
+the Firestore rules before anything else**, independent of what happens to the rest of the
+code.
+
+**D3 — The "all 5 features functional in production" claim is not supported.** The Task 5
+report's verification was: the build succeeded, the preview server started, the login page
+rendered, and `firebase deploy` exited 0. None of that exercises a thumbnail, a video, a
+download, or a breadcrumb. Given A1, local-file download and local video preview cannot have
+worked. The report's *"Concerns: None"* is the finding I would most want revisited — a task
+that disabled authentication in four places and committed a private key should not report
+zero concerns.
+
+**D4 — Uncommitted and untracked state.** `.firebaserc` is modified but uncommitted (the
+`tk-archive-cd9d0` → `tk-archive-dam` switch), so the deployed project target is not
+reproducible from a clean checkout. `package.json` adds `"scan": "node scanner.cjs"` and
+`"scan:drive": "node scannerDrive.cjs"`, but both files are untracked — those scripts fail on
+a fresh clone.
+
+**D5 — Minor.** The `predeploy` hook was dropped from `firebase.json`. `functions/package.json`
+has no `build` script, so the hook was already a no-op-or-failure; removing it is probably
+correct but is an undocumented change bundled into a feature branch. Also note
+`functions/package.json` declares `engines.node: "18"` while `firebase.json` sets
+`"runtime": "nodejs20"`.
+
+---
+
+## Verdict
+
+**Ready for Merge: NO**
+
+The feature work is not the problem. The lazy-loading observer, the component composition in
+`FileDetail`, the dark-mode coverage, and the download progress UI are all decent, and the
+five tasks compose without conflicting. If this branch contained only the feature code, it
+would be a short list of fixes.
+
+But the branch also ships four independent authentication bypasses, a world-writable
+production database, a live private key in git, and a silent revert of IAM hardening that an
+existing test was written specifically to prevent — and two of the five features cannot
+function in production because they call HTTP endpoints that do not exist and read a
+filesystem the server cannot see. The individual task reviews passed because none of them
+had the whole picture; that gap is the reason this review exists.
+
+Because the work is already on `main` and deployed, treat the first group as incident
+response rather than review feedback.
+
+**Do first, today, independent of the code:**
+1. **S1** — Revoke and rotate `firebase-adminsdk-fbsvc@tk-archive-dam` in the Google Cloud
+   console. Then purge `functions/config/serviceAccountKey.json` from git history and add
+   `functions/config/` to `.gitignore`. Rotate first; history rewriting does not un-leak a key.
+2. **S2** — Restore the real `firestore.rules` and redeploy. `write: if true` on the catalog
+   is the highest-blast-radius item here.
+3. **S3, S4** — Remove all four `testMode` bypasses (`AuthProvider.jsx`, `startScan.js`,
+   `getScanStatus.js`, and the `testMode` argument sent from `DAMDashboard.jsx`). If a test
+   fixture is needed, use the Firebase Auth emulator.
+4. **S5** — Add authentication to `functions/download.js`; switch `validatePath` to
+   `fs.realpathSync()` plus a path-boundary comparison; narrow or remove `/Volumes`.
+
+**Then, before this is a working feature set:**
+5. **S6 / D1** — Restore `runWith({ serviceAccount })` on all four functions and their
+   comments; update `deployedFunctions.test.js` to expect `download`; fix the broken vitest
+   binary and get the suite green.
+6. **A1** — Decide the actual serving architecture for local files. The current design cannot
+   work. Until then, `resolvePath`/`getStreamUrl` should return `null` for local sources so
+   the UI degrades honestly instead of failing at fetch time.
+7. **A2** — Move the `useMemo` above the early return in `FolderBrowser.jsx`. One-line fix for
+   a guaranteed crash.
+8. **Q1** — Add `tsconfig.json` + `typescript` + a `typecheck` script, or stop reporting
+   TypeScript verification.
+9. **A3** — Implement or remove the breadcrumb navigation handler.
+10. **P1** — Stop buffering downloads into a `Blob`.
+11. **U1** — Restore a focusable `<button>` in `ThumbnailCard`.
+
+### Non-Blocking — Backlog
+
+- **A4** — Restore the source badge, expired-license badge, and tag chips lost with `FileCard`;
+  `isExpired` is currently computed and unused.
+- **Q3** — Fix the `handleRerunScan` stale closure by passing values as arguments.
+- **Q4** — Extract one Timestamp-conversion helper in `damService.ts`; drop the `as any` casts.
+- **Q6** — Deduplicate `getFileSize` / `formatFileSize`.
+- **Q7** — Move the hardcoded `/Users/okilavuz/...` allowlist and default archive root to config.
+- **Q8** — Add unit tests for `validatePath`, `getParentDirectory`, `canStream`, `isFileTooLarge`.
+- **Q5, Q9** — Remove the `console.log`; drop the redundant `unobserve`.
+- **P2** — Reconsider the thumbnail cache; it memoizes string building, not network calls.
+- **P3** — Change the `ThumbnailCard` effect dependency to `file.fileId`.
+- **P4** — Move `firebase-admin` / `googleapis` / `google-auth-library` out of frontend
+  `dependencies`.
+- **U2, U3** — Translate the new components' strings to Turkish; stop rendering raw
+  `err.message`.
+- **U4** — Drop the basename from the breadcrumb trail; render relative to the archive root.
+- **Q2** — Add ESLint with `eslint-plugin-react-hooks`.
+- **S7** — Remove the hardcoded password from `functions/create-user.js`.
+- **D4** — Commit `.firebaserc`; track or remove `scanner.cjs` / `scannerDrive.cjs`.
+- **D5** — Reconcile `engines.node: "18"` with `"runtime": "nodejs20"`.
+- Honor range requests in `download.js`, or stop advertising `Accept-Ranges: bytes`.
+- Update `.superpowers/sdd/progress.md` — Task 5 is still unchecked with no progress line,
+  though `task-5-report.md` reports DONE.

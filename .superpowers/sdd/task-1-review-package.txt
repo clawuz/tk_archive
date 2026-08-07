@@ -1,0 +1,346 @@
+1459fb7 feat: integrate lazy-loaded thumbnails into file gallery
+e4e0332 feat: lazy-loaded thumbnail card with file-type fallback
+2f0dc79 feat: thumbnail resolution service with fallback priority
+c71eb81 feat: add file type icon mapping for fallback thumbnails
+ src/components/dam/FileGallery.jsx   | 108 +----------------------------------
+ src/components/dam/ThumbnailCard.jsx |  87 ++++++++++++++++++++++++++++
+ src/services/thumbnailService.ts     |  60 +++++++++++++++++++
+ src/utils/fileIcons.ts               |  17 ++++++
+ 4 files changed, 167 insertions(+), 105 deletions(-)
+diff --git a/src/components/dam/FileGallery.jsx b/src/components/dam/FileGallery.jsx
+index 1cee722..0ccf7f1 100644
+--- a/src/components/dam/FileGallery.jsx
++++ b/src/components/dam/FileGallery.jsx
+@@ -1,11 +1,12 @@
+ import { useState, useEffect } from 'react'
++import ThumbnailCard from './ThumbnailCard'
+ 
+ export default function FileGallery({ files, onFileSelect, loading }) {
+   const [displayFiles, setDisplayFiles] = useState([])
+   const [visibleCount, setVisibleCount] = useState(50)
+ 
+   useEffect(() => {
+     setDisplayFiles(files.slice(0, visibleCount))
+   }, [files, visibleCount])
+ 
+   function handleLoadMore() {
+@@ -38,135 +39,32 @@ export default function FileGallery({ files, onFileSelect, loading }) {
+           </div>
+           <div className="text-sm text-slate-600 dark:text-slate-400 mt-1">
+             Drive
+           </div>
+         </div>
+       </div>
+ 
+       {/* Gallery Grid */}
+       <div className="grid grid-cols-2 sm:grid-cols-3 gap-4">
+         {displayFiles.map((file) => (
+-          <FileCard
++          <ThumbnailCard
+             key={file.fileId}
+             file={file}
+-            onClick={() => onFileSelect(file)}
++            onSelect={() => onFileSelect(file)}
+           />
+         ))}
+       </div>
+ 
+       {/* Load More */}
+       {visibleCount < files.length && (
+         <div className="flex justify-center">
+           <button
+             onClick={handleLoadMore}
+             className="px-6 py-2 bg-blue-500 hover:bg-blue-600 text-white rounded-lg font-medium transition"
+           >
+             Daha Fazla Yükle ({files.length - visibleCount} kaldı)
+           </button>
+         </div>
+       )}
+     </div>
+   )
+ }
+-
+-/**
+- * Single file card in gallery
+- */
+-function FileCard({ file, onClick }) {
+-  const [imageError, setImageError] = useState(false)
+-
+-  const sourceColor = file.source === 'local' ? 'bg-blue-100 text-blue-800' : 'bg-green-100 text-green-800'
+-  const sourceLabel = file.source === 'local' ? '📂 Yerel' : '☁️ Drive'
+-
+-  // Get file icon based on type
+-  const getFileIcon = () => {
+-    if (file.type.startsWith('image/')) return '🖼️'
+-    if (file.type.startsWith('video/')) return '🎬'
+-    if (file.type === 'application/pdf') return '📄'
+-    if (file.type.includes('psd')) return '🎨'
+-    return '📄'
+-  }
+-
+-  return (
+-    <button
+-      onClick={onClick}
+-      className="group relative bg-white dark:bg-slate-800 rounded-lg overflow-hidden border border-slate-200 dark:border-slate-700 hover:shadow-lg hover:border-blue-400 dark:hover:border-blue-500 transition cursor-pointer"
+-    >
+-      {/* Thumbnail Container */}
+-      <div className="relative w-full aspect-square bg-gradient-to-br from-slate-100 to-slate-200 dark:from-slate-700 dark:to-slate-600 overflow-hidden">
+-        {/* Thumbnail Image */}
+-        {!imageError ? (
+-          <img
+-            src={file.thumbnailUrl}
+-            alt={file.name}
+-            onError={() => setImageError(true)}
+-            className="w-full h-full object-cover group-hover:scale-105 transition duration-200"
+-          />
+-        ) : (
+-          <div className="w-full h-full flex items-center justify-center text-3xl">
+-            {getFileIcon()}
+-          </div>
+-        )}
+-
+-        {/* Overlay on hover */}
+-        <div className="absolute inset-0 bg-black/0 group-hover:bg-black/20 transition flex items-center justify-center">
+-          <div className="opacity-0 group-hover:opacity-100 transition">
+-            <svg
+-              className="w-8 h-8 text-white"
+-              fill="currentColor"
+-              viewBox="0 0 20 20"
+-            >
+-              <path d="M10 12a2 2 0 100-4 2 2 0 000 4z" />
+-              <path
+-                fillRule="evenodd"
+-                d="M.458 10C1.732 5.943 5.522 3 10 3s8.268 2.943 9.542 7c-1.274 4.057-5.064 7-9.542 7S1.732 14.057.458 10zM14 10a4 4 0 11-8 0 4 4 0 018 0z"
+-                clipRule="evenodd"
+-              />
+-            </svg>
+-          </div>
+-        </div>
+-
+-        {/* Source Badge */}
+-        <div className={`absolute top-2 right-2 px-2 py-1 rounded text-xs font-medium ${sourceColor} dark:${sourceColor}`}>
+-          {sourceLabel.split(' ')[1]}
+-        </div>
+-
+-        {/* Expired License Badge */}
+-        {file.isExpired && (
+-          <div className="absolute top-2 left-2 px-2 py-1 rounded text-xs font-medium bg-red-100 text-red-800">
+-            ⚠️ Süresi Geçti
+-          </div>
+-        )}
+-      </div>
+-
+-      {/* File Info */}
+-      <div className="p-3 border-t border-slate-200 dark:border-slate-700">
+-        <h3 className="font-medium text-sm text-slate-900 dark:text-white truncate">
+-          {file.name}
+-        </h3>
+-        <div className="flex items-center justify-between mt-1 text-xs text-slate-600 dark:text-slate-400">
+-          <span>{file.sizeFormatted}</span>
+-          <span>{file.dateFormatted}</span>
+-        </div>
+-
+-        {/* Tags */}
+-        {file.tags && file.tags.length > 0 && (
+-          <div className="flex flex-wrap gap-1 mt-2">
+-            {file.tags.slice(0, 2).map((tag) => (
+-              <span
+-                key={tag}
+-                className="inline-block px-2 py-1 text-xs bg-slate-100 dark:bg-slate-700 text-slate-700 dark:text-slate-300 rounded"
+-              >
+-                {tag}
+-              </span>
+-            ))}
+-            {file.tags.length > 2 && (
+-              <span className="inline-block px-2 py-1 text-xs text-slate-500 dark:text-slate-400">
+-                +{file.tags.length - 2}
+-              </span>
+-            )}
+-          </div>
+-        )}
+-      </div>
+-    </button>
+-  )
+-}
+diff --git a/src/components/dam/ThumbnailCard.jsx b/src/components/dam/ThumbnailCard.jsx
+new file mode 100644
+index 0000000..8ed8d92
+--- /dev/null
++++ b/src/components/dam/ThumbnailCard.jsx
+@@ -0,0 +1,87 @@
++import { useState, useEffect, useRef } from 'react';
++import { resolveThumbnail } from '../../services/thumbnailService';
++import { getFileTypeIcon } from '../../utils/fileIcons';
++
++export default function ThumbnailCard({ file, onSelect, className = '' }) {
++  const [thumbnail, setThumbnail] = useState(null);
++  const [loading, setLoading] = useState(true);
++  const [error, setError] = useState(false);
++  const [isVisible, setIsVisible] = useState(false);
++  const imageRef = useRef(null);
++
++  // Setup Intersection Observer for lazy loading
++  useEffect(() => {
++    const observer = new IntersectionObserver(
++      ([entry]) => {
++        if (entry.isIntersecting) {
++          setIsVisible(true);
++          observer.unobserve(imageRef.current);
++        }
++      },
++      { rootMargin: '100px' }
++    );
++
++    if (imageRef.current) {
++      observer.observe(imageRef.current);
++    }
++
++    return () => observer.disconnect();
++  }, []);
++
++  // Load thumbnail when visible
++  useEffect(() => {
++    if (!isVisible) return;
++
++    (async () => {
++      try {
++        setLoading(true);
++        const result = await resolveThumbnail(file);
++        setThumbnail(result);
++        if (!result.url) {
++          setError(true);
++        }
++      } catch (err) {
++        console.error('Thumbnail load error:', err);
++        setError(true);
++      } finally {
++        setLoading(false);
++      }
++    })();
++  }, [isVisible, file]);
++
++  const fileIcon = getFileTypeIcon(file.mimeType);
++
++  return (
++    <div
++      ref={imageRef}
++      onClick={() => onSelect?.(file)}
++      className={`relative bg-white dark:bg-slate-800 rounded-lg overflow-hidden border border-slate-200 dark:border-slate-700 cursor-pointer transition hover:shadow-lg ${className}`}
++    >
++      {/* Thumbnail or Fallback */}
++      {loading ? (
++        // Loading skeleton
++        <div className="w-full h-48 bg-gradient-to-r from-slate-200 to-slate-100 dark:from-slate-700 dark:to-slate-600 animate-pulse" />
++      ) : thumbnail?.url && !error ? (
++        <img
++          src={thumbnail.url}
++          alt={file.name}
++          className="w-full h-48 object-cover"
++          onError={() => setError(true)}
++        />
++      ) : (
++        // File-type icon fallback
++        <div className={`w-full h-48 flex items-center justify-center ${fileIcon.bg}`}>
++          <span className="text-5xl">{fileIcon.icon}</span>
++        </div>
++      )}
++
++      {/* File info overlay */}
++      <div className="absolute inset-0 bg-gradient-to-t from-black/60 to-transparent opacity-0 hover:opacity-100 transition p-3 flex flex-col justify-end">
++        <p className="text-white font-semibold text-sm truncate">{file.name}</p>
++        <p className="text-white/80 text-xs">
++          {file.sizeFormatted} • {file.source === 'local' ? '📂 Yerel' : '☁️ Drive'}
++        </p>
++      </div>
++    </div>
++  );
++}
+diff --git a/src/services/thumbnailService.ts b/src/services/thumbnailService.ts
+new file mode 100644
+index 0000000..3632ba9
+--- /dev/null
++++ b/src/services/thumbnailService.ts
+@@ -0,0 +1,60 @@
++import { DAMFile } from '../types/dam';
++
++interface ThumbnailResult {
++  url: string | null;
++  source: 'firestore' | 'fallback' | 'placeholder';
++  cached: boolean;
++}
++
++// Simple in-memory cache (clear on page reload)
++const thumbnailCache = new Map<string, ThumbnailResult>();
++const CACHE_SIZE_LIMIT = 100;
++
++export async function resolveThumbnail(file: DAMFile): Promise<ThumbnailResult> {
++  const cacheKey = file.fileId;
++
++  // Check cache first
++  if (thumbnailCache.has(cacheKey)) {
++    return { ...thumbnailCache.get(cacheKey)!, cached: true };
++  }
++
++  let result: ThumbnailResult;
++
++  // Priority 1: Firestore stored thumbnail
++  if (file.thumbnail?.url) {
++    result = {
++      url: file.thumbnail.url,
++      source: 'firestore',
++      cached: false
++    };
++  }
++  // Priority 2: Google Drive native thumbnails
++  else if (file.source === 'drive' && file.driveFileId) {
++    result = {
++      url: `https://drive.google.com/thumbnail?id=${file.driveFileId}&sz=w200`,
++      source: 'firestore',
++      cached: false
++    };
++  }
++  // Priority 3: Fallback to placeholder
++  else {
++    result = {
++      url: null,
++      source: 'placeholder',
++      cached: false
++    };
++  }
++
++  // Store in cache (with size limit)
++  if (thumbnailCache.size >= CACHE_SIZE_LIMIT) {
++    const firstKey = thumbnailCache.keys().next().value;
++    thumbnailCache.delete(firstKey);
++  }
++  thumbnailCache.set(cacheKey, result);
++
++  return result;
++}
++
++export function clearThumbnailCache() {
++  thumbnailCache.clear();
++}
+diff --git a/src/utils/fileIcons.ts b/src/utils/fileIcons.ts
+new file mode 100644
+index 0000000..d55754b
+--- /dev/null
++++ b/src/utils/fileIcons.ts
+@@ -0,0 +1,17 @@
++// File type icon mapping with Tailwind color classes
++export const FILE_TYPE_ICONS = {
++  'video/mp4': { icon: '🎬', color: 'text-blue-500', bg: 'bg-blue-100 dark:bg-blue-900' },
++  'video/quicktime': { icon: '🎬', color: 'text-blue-500', bg: 'bg-blue-100 dark:bg-blue-900' },
++  'image/jpeg': { icon: '🖼️', color: 'text-purple-500', bg: 'bg-purple-100 dark:bg-purple-900' },
++  'image/png': { icon: '🖼️', color: 'text-purple-500', bg: 'bg-purple-100 dark:bg-purple-900' },
++  'application/pdf': { icon: '📄', color: 'text-red-500', bg: 'bg-red-100 dark:bg-red-900' },
++  'application/zip': { icon: '📦', color: 'text-yellow-500', bg: 'bg-yellow-100 dark:bg-yellow-900' },
++};
++
++export function getFileTypeIcon(mimeType: string) {
++  return FILE_TYPE_ICONS[mimeType] || {
++    icon: '📁',
++    color: 'text-gray-500',
++    bg: 'bg-gray-100 dark:bg-gray-800'
++  };
++}

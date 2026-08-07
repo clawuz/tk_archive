@@ -1,0 +1,61 @@
+64d8064 fix: large file warning now displays properly and add dark mode support
+ src/components/dam/VideoPreview.jsx | 12 ++++++------
+ 1 file changed, 6 insertions(+), 6 deletions(-)
+diff --git a/src/components/dam/VideoPreview.jsx b/src/components/dam/VideoPreview.jsx
+index b600f43..e6ec47d 100644
+--- a/src/components/dam/VideoPreview.jsx
++++ b/src/components/dam/VideoPreview.jsx
+@@ -24,29 +24,29 @@ export default function VideoPreview({ file }) {
+       const url = getStreamUrl(file);
+       setStreamUrl(url);
+       setCanPreview(true);
+       setError(null);
+     } catch (err) {
+       setError('Unable to preview this video');
+       console.error('VideoPreview error:', err);
+     }
+   }, [file]);
+ 
+-  if (!canPreview) return null;
++  if (!file || (!canPreview && !error)) return null;
+ 
+   return (
+     <div className="bg-black rounded-lg overflow-hidden mb-4">
+       {error ? (
+-        <div className="h-96 flex items-center justify-center bg-slate-900 text-white">
++        <div className="h-96 flex items-center justify-center bg-slate-100 dark:bg-slate-900 text-slate-900 dark:text-white">
+           <div className="text-center">
+             <p className="text-lg mb-2">⚠️ {error}</p>
+-            <p className="text-sm text-slate-400">Size: {getFileSize(file.size)}</p>
++            <p className="text-sm text-slate-600 dark:text-slate-400">Size: {getFileSize(file.size)}</p>
+           </div>
+         </div>
+       ) : file.source === 'drive' ? (
+         // Google Drive embedded preview
+         <iframe
+           src={streamUrl}
+           title={file.name}
+           className="w-full h-96"
+           allowFullScreen
+         />
+@@ -54,17 +54,17 @@ export default function VideoPreview({ file }) {
+         // Local file video player (HTML5)
+         <video
+           src={streamUrl}
+           controls
+           className="w-full h-96 bg-black"
+           controlsList="nodownload"
+         />
+       )}
+ 
+       {/* Video info */}
+-      <div className="bg-slate-900 text-white p-3 text-sm">
+-        <p className="font-mono text-xs text-slate-400">{file.mimeType}</p>
+-        <p className="text-slate-300">Size: {getFileSize(file.size)}</p>
++      <div className="bg-slate-100 dark:bg-slate-900 text-slate-900 dark:text-white p-3 text-sm">
++        <p className="font-mono text-xs text-slate-600 dark:text-slate-400">{file.mimeType}</p>
++        <p className="text-slate-700 dark:text-slate-300">Size: {getFileSize(file.size)}</p>
+       </div>
+     </div>
+   );
+ }

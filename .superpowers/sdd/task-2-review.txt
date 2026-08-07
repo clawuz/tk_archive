@@ -1,0 +1,127 @@
+## Task 2 Video Preview Implementation Review
+
+## Spec Compliance: ❌ NO
+
+### Critical Issues
+
+1. **UNREACHABLE ERROR HANDLER (Logic Flaw)**
+   - File: VideoPreview.jsx, lines 73-98
+   - When file size exceeds 2GB:
+     * Line 74: `setError()` sets error message
+     * Line 75: `setCanPreview(false)` disables preview
+     * Line 89: `if (!canPreview) return null;` EXITS COMPONENT
+     * Result: Error message JSX (lines 93-98) is unreachable
+   - Acceptance criterion "Large files (>2GB): shows warning message" FAILS
+   - The warning is silently suppressed instead of displayed
+   - Fix Required: Restructure logic to render error even when canPreview is false
+     * Option A: Keep canPreview true when error is set
+     * Option B: Check error state before checking canPreview
+     * Option C: Display error in separate condition
+
+### Spec Compliance Checklist
+- [✓] All 2 files created (streamingService.ts, VideoPreview.jsx)
+- [✓] FileDetail.jsx modified with imports and component integration
+- [✓] streamingService exports all 4 functions (canStream, getStreamUrl, getFileSize, isFileTooLarge)
+- [✓] VideoPreview detects video files (MP4, MOV, MKV via mimeType)
+- [✓] HTML5 video player for local files with controls
+- [✓] iframe embed for Google Drive files
+- [✗] Warning display for files >2GB (FAILS - unreachable code)
+- [✓] Returns null for non-video files (silent)
+- [⚠️] Dark mode support (PARTIAL - missing dark: prefixes)
+- [✓] Build verification passed (0 TypeScript errors)
+
+## Code Quality: ⚠️ FINDINGS
+
+### Dark Mode Inconsistency
+- File: VideoPreview.jsx
+- Issue: Uses fixed dark colors without Tailwind dark: variants
+  * Current: `bg-slate-900`, `text-white`, `text-slate-400`
+  * Project standard (from FileDetail.jsx): `dark:text-white`, `dark:text-slate-400`
+- Impact: Component will not adapt to light mode themes
+- Severity: Medium - works but violates project conventions
+
+### Code Quality Strengths
+- [✓] React hooks properly implemented (useState, useEffect)
+- [✓] Hook dependencies correctly specified ([file])
+- [✓] Error handling with try-catch wrapper
+- [✓] All imports complete and correct
+- [✓] File size formatting logic sound (1024-based conversion, toFixed(2))
+- [✓] Proper use of React conditional rendering
+- [✓] HTML5 video element configured correctly (controls, controlsList="nodownload")
+- [✓] Google Drive iframe properly configured (allowFullScreen, title attribute)
+
+### Process Quality
+- [✓] Three logical commits with clear messages
+- [✓] TypeScript build passes (0 errors)
+- [✓] No console errors reported
+
+## Verdict
+
+**Spec Compliance: ❌ NO** — Critical logic flaw prevents large file warning from displaying (acceptance criterion violation)
+
+**Code Quality: ⚠️ FINDINGS** — Dark mode support incomplete; uses fixed colors instead of dark: variants
+
+## Required Fixes Before Approval
+
+### CRITICAL: Fix Large File Warning Logic
+**File:** src/components/dam/VideoPreview.jsx
+
+**Current problematic code (lines 64-89):**
+```javascript
+useEffect(() => {
+  if (!file) return;
+
+  try {
+    if (!canStream(file)) {
+      setCanPreview(false);
+      return;
+    }
+
+    if (isFileTooLarge(file.size)) {
+      setError(`File too large (${getFileSize(file.size)}). Download to play locally.`);
+      setCanPreview(false);  // ← BUG: Makes error unreachable
+      return;
+    }
+
+    const url = getStreamUrl(file);
+    setStreamUrl(url);
+    setCanPreview(true);
+    setError(null);
+  } catch (err) {
+    setError('Unable to preview this video');
+    console.error('VideoPreview error:', err);
+  }
+}, [file]);
+
+if (!canPreview) return null;  // ← Exits before error can display
+```
+
+**Suggested fix:**
+```javascript
+if (isFileTooLarge(file.size)) {
+  setError(`File too large (${getFileSize(file.size)}). Download to play locally.`);
+  setCanPreview(false);
+  setStreamUrl(null);
+  return;  // Remove after return so error state persists
+}
+```
+
+Then change the return condition:
+```javascript
+if (!file || (!canPreview && !error)) return null;
+```
+
+Or restructure the entire render logic to handle error state independently.
+
+### MEDIUM: Add Dark Mode Support
+Apply Tailwind dark: prefixes to match project conventions:
+- `bg-slate-900` → `bg-slate-900 dark:bg-slate-900`
+- `text-white` → `text-white dark:text-white`
+- `text-slate-400` → `text-slate-400 dark:text-slate-400`
+- `text-slate-300` → `text-slate-300 dark:text-slate-300`
+
+## Acceptance
+
+This implementation **CANNOT BE APPROVED** until the large file warning logic is fixed. The critical issue prevents a required acceptance criterion from functioning.
+
+Estimated effort to fix: 10 minutes for logic restructure + verification

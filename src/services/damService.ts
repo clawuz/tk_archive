@@ -85,9 +85,12 @@ export async function searchFiles(
   const queryConstraints = []
 
   // Build query constraints
-  if (filters.sources && filters.sources.length > 0) {
-    // Query by source (separate queries if multiple sources)
-    // For simplicity, fetch all and filter in app
+  if (filters.sources && filters.sources.length === 1) {
+    // Query by specific source for efficiency
+    queryConstraints.push(where('source', '==', filters.sources[0]))
+  } else if (filters.sources && filters.sources.length > 1) {
+    // Multiple sources: fetch all and filter in app
+    queryConstraints.push(where('source', 'in', filters.sources))
   }
 
   if (filters.tags && filters.tags.length > 0) {
@@ -105,7 +108,7 @@ export async function searchFiles(
   queryConstraints.push(orderBy(sortField, sortDirection))
 
   // Add pagination (limit only for now, use cursor-based pagination later)
-  queryConstraints.push(limit(filters.limit || 50))
+  queryConstraints.push(limit(filters.limit || 600))
 
   // Execute query
   try {

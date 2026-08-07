@@ -1,0 +1,235 @@
+#!/usr/bin/env node
+
+/**
+ * TK Archive Google Drive Scanner
+ * Scans Google Drive folder and populates Firestore with file metadata
+ */
+
+const fs = require('fs');
+const path = require('path');
+const { google } = require('googleapis');
+const admin = require('firebase-admin');
+
+console.log('📦 Loading firebase-admin...');
+const serviceAccount = JSON.parse(
+  fs.readFileSync(path.join(__dirname, 'functions/config/serviceAccountKey.json'), 'utf8')
+);
+
+admin.initializeApp({
+  credential: admin.credential.cert(serviceAccount),
+  projectId: 'tk-archive-dam'
+});
+
+const db = admin.firestore();
+
+// Configuration
+const DRIVE_FOLDER_ID = process.argv[2] || 'root'; // 'root' = My Drive
+const DRIVE_FOLDER_NAME = process.argv[3] || 'Google Drive';
+
+console.log(`\n📂 Scanning Google Drive folder: ${DRIVE_FOLDER_NAME}`);
+console.log(`🔄 Folder ID: ${DRIVE_FOLDER_ID}\n`);
+
+// Get OAuth2 client from environment or token file
+async function authorize() {
+  try {
+    // Try to load stored token
+    const tokenPath = path.join(__dirname, 'functions/config/drive-token.json');
+    if (fs.existsSync(tokenPath)) {
+      const token = JSON.parse(fs.readFileSync(tokenPath, 'utf8'));
+      return token;
+    }
+
+    console.error('❌ Google Drive token not found!');
+    console.error(`\nSetup instructions:`);
+    console.error(`1. Visit: https://developers.google.com/drive/api/quickstart/nodejs`);
+    console.error(`2. Create OAuth 2.0 Desktop App credentials`);
+    console.error(`3. Save credentials to: functions/config/credentials.json`);
+    console.error(`4. Run: node scannerDrive.cjs --auth\n`);
+    process.exit(1);
+  } catch (err) {
+    console.error('❌ Auth error:', err.message);
+    process.exit(1);
+  }
+}
+
+async function getMimeType(mimeType) {
+  const mimeMap = {
+    'application/vnd.google-apps.folder': 'folder',
+    'image/jpeg': 'image/jpeg',
+    'image/png': 'image/png',
+    'image/gif': 'image/gif',
+    'image/webp': 'image/webp',
+    'video/mp4': 'video/mp4',
+    'video/quicktime': 'video/quicktime',
+    'application/pdf': 'application/pdf',
+    'application/msword': 'application/msword',
+    'application/vnd.openxmlformats-officedocument.wordprocessingml.document': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  };
+  return mimeMap[mimeType] || mimeType || 'application/octet-stream';
+}
+
+async function scanDriveFolder(drive, folderId, scanId) {
+  const files = [];
+  let pageToken = null;
+
+  try {
+    do {
+      console.log('.');
+      process.stdout.write('.');
+
+      const result = await drive.files.list({
+        q: `'${folderId}' in parents and trashed=false`,
+        spaces: 'drive',
+        fields: 'nextPageToken, files(id, name, mimeType, size, createdTime, modifiedTime, webViewLink, thumbnailLink)',
+        pageSize: 100,
+        pageToken: pageToken
+      });
+
+      const driveFiles = result.data.files || [];
+
+      for (const file of driveFiles) {
+        // Skip Google Workspace files (folders, docs, etc)
+        if (file.mimeType === 'application/vnd.google-apps.folder') {
+          // Optionally recurse into folders
+          // const subFiles = await scanDriveFolder(drive, file.id, scanId);
+          // files.push(...subFiles);
+          continue;
+        }
+
+        const fileDoc = {
+          fileId: file.id,
+          name: file.name,
+          path: file.webViewLink || `https://drive.google.com/file/d/${file.id}`,
+          source: 'drive',
+          extension: file.name.split('.').pop() || '',
+          mimeType: await getMimeType(file.mimeType),
+          type: file.mimeType,
+          size: parseInt(file.size) || 0,
+          hash: `drive:${file.id}`, // Google Drive IDs as hash
+          tags: [],
+          createdAt: new Date(file.createdTime).getTime(),
+          modifiedAt: new Date(file.modifiedTime).getTime(),
+          uploadedAt: Date.now(),
+          scanId,
+          lastScanAt: Date.now(),
+          driveFileId: file.id,
+          driveFolderId: folderId,
+          thumbnail: file.thumbnailLink ? {
+            url: file.thumbnailLink,
+            generated: false,
+            generatedAt: Date.now()
+          } : null,
+          copyright: {
+            owner: 'TK',
+            year: new Date().getFullYear()
+          },
+          license: {
+            type: 'commercial',
+            name: 'Commercial Use'
+          },
+          status: 'active',
+          isDeleted: false
+        };
+
+        files.push(fileDoc);
+      }
+
+      pageToken = result.data.nextPageToken;
+    } while (pageToken);
+
+  } catch (err) {
+    console.error(`\n❌ Error scanning Drive:`, err.message);
+  }
+
+  return files;
+}
+
+async function run() {
+  const startTime = Date.now();
+
+  try {
+    // Get auth token
+    const token = await authorize();
+
+    // Create Google Drive API client
+    const auth = new google.auth.OAuth2();
+    auth.setCredentials(token);
+    const drive = google.drive({ version: 'v3', auth });
+
+    // Create scan document
+    const scanRef = db.collection('scans').doc();
+    const scanId = scanRef.id;
+
+    await scanRef.set({
+      scanId,
+      source: 'drive',
+      archivePath: DRIVE_FOLDER_NAME,
+      driveFolderId: DRIVE_FOLDER_ID,
+      status: 'running',
+      startedAt: admin.firestore.Timestamp.now(),
+      userId: 'scanner-cli',
+      triggerType: 'manual',
+      errors: []
+    });
+
+    console.log(`\n✅ Created scan: ${scanId}\n`);
+
+    // Scan Drive folder
+    console.log(`🔍 Scanning Google Drive...`);
+    const files = await scanDriveFolder(drive, DRIVE_FOLDER_ID, scanId);
+    console.log(`\n📁 Found ${files.length} files\n`);
+
+    // Write files to Firestore (batch)
+    if (files.length > 0) {
+      console.log(`💾 Writing to Firestore...`);
+      const batchSize = 500;
+
+      for (let i = 0; i < files.length; i += batchSize) {
+        const batch = db.batch();
+        const batchFiles = files.slice(i, i + batchSize);
+
+        for (const file of batchFiles) {
+          const fileRef = db.collection('files').doc(file.fileId);
+          batch.set(fileRef, file);
+        }
+
+        await batch.commit();
+        console.log(`  Batch ${Math.floor(i / batchSize) + 1}: ${batchFiles.length} files written`);
+      }
+      console.log(`✅ Wrote ${files.length} total files to Firestore\n`);
+    }
+
+    // Update scan with results
+    const duration = Date.now() - startTime;
+    const totalSizeBytes = files.reduce((sum, f) => sum + f.size, 0);
+
+    await scanRef.update({
+      status: 'completed',
+      completedAt: admin.firestore.Timestamp.now(),
+      duration,
+      results: {
+        totalFiles: files.length,
+        totalSizeBytes,
+        totalSizeGB: Math.round(totalSizeBytes / 1024 / 1024 / 1024 * 100) / 100,
+        newFiles: files.length,
+        deletedFiles: 0,
+        modifiedFiles: 0,
+        unchangedFiles: 0,
+        fileTypes: {}
+      }
+    });
+
+    console.log(`✨ Scan completed!`);
+    console.log(`⏱️  Duration: ${Math.round(duration / 1000)}s`);
+    console.log(`📊 Total files: ${files.length}`);
+    console.log(`💾 Total size: ${Math.round(totalSizeBytes / 1024 / 1024 / 1024 * 100) / 100} GB\n`);
+
+    process.exit(0);
+  } catch (error) {
+    console.error(`\n❌ Scan failed:`, error.message);
+    console.error(error);
+    process.exit(1);
+  }
+}
+
+run();

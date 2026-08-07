@@ -1,0 +1,123 @@
+8d7b6ca feat: integrate folder breadcrumb navigation into file detail
+afe32ba feat: folder breadcrumb navigation component
+ src/components/dam/FileDetail.jsx    | 11 ++++++++
+ src/components/dam/FolderBrowser.jsx | 51 ++++++++++++++++++++++++++++++++++++
+ 2 files changed, 62 insertions(+)
+diff --git a/src/components/dam/FileDetail.jsx b/src/components/dam/FileDetail.jsx
+index 825128e..7367295 100644
+--- a/src/components/dam/FileDetail.jsx
++++ b/src/components/dam/FileDetail.jsx
+@@ -1,24 +1,32 @@
+ import { useState } from 'react'
+ import damService from '../../services/damService'
+ import VideoPreview from './VideoPreview'
+ import FileDownload from './FileDownload'
++import FolderBrowser from './FolderBrowser'
+ 
+ export default function FileDetail({
+   file,
+   onClose,
+   onOpenLightbox,
+   onShowPreview,
+ }) {
+   const [newTag, setNewTag] = useState('')
+   const [addingTag, setAddingTag] = useState(false)
+ 
++  function handleFolderNavigate(path) {
++    // Trigger navigation to folder
++    // Parent component (DAMDashboard) can handle filtering/navigation
++    console.log('Navigate to folder:', path)
++    onShowPreview?.(null)
++  }
++
+   async function handleAddTag() {
+     if (newTag.trim()) {
+       try {
+         await damService.addTagsToFile(file.fileId, [newTag.trim()])
+         setNewTag('')
+         setAddingTag(false)
+         // Refresh file data
+       } catch (err) {
+         console.error('Etiket eklenemedi:', err)
+       }
+@@ -63,20 +71,23 @@ export default function FileDetail({
+               viewBox="0 0 20 20"
+             >
+               <path d="M10 12a2 2 0 100-4 2 2 0 000 4z" />
+             </svg>
+           </div>
+         </div>
+ 
+         {/* Video Preview Player */}
+         <VideoPreview file={file} />
+ 
++        {/* Folder Navigation Breadcrumb */}
++        <FolderBrowser file={file} onNavigate={handleFolderNavigate} />
++
+         {/* File Info */}
+         <div>
+           <h4 className="font-semibold text-slate-900 dark:text-white mb-3">
+             📋 Dosya Bilgisi
+           </h4>
+           <div className="space-y-2 text-sm">
+             <div className="flex justify-between">
+               <span className="text-slate-600 dark:text-slate-400">Ad:</span>
+               <span className="text-slate-900 dark:text-white font-medium truncate ml-2">
+                 {file.name}
+diff --git a/src/components/dam/FolderBrowser.jsx b/src/components/dam/FolderBrowser.jsx
+new file mode 100644
+index 0000000..b2094e7
+--- /dev/null
++++ b/src/components/dam/FolderBrowser.jsx
+@@ -0,0 +1,51 @@
++import { useMemo } from 'react'
++import { getParentDirectory } from '../../services/pathResolver'
++
++export default function FolderBrowser({ file, onNavigate }) {
++  if (file?.source !== 'local') return null
++
++  const filePath = file?.path || ''
++
++  const breadcrumbs = useMemo(() => {
++    const parts = filePath.split('/').filter(Boolean)
++    return parts.map((part, index) => ({
++      label: part,
++      path: '/' + parts.slice(0, index + 1).join('/')
++    }))
++  }, [filePath])
++
++  const handleNavigateToParent = () => {
++    const parent = getParentDirectory(filePath)
++    if (parent) {
++      onNavigate?.(parent)
++    }
++  }
++
++  const handleNavigateTo = (path) => {
++    onNavigate?.(path)
++  }
++
++  return (
++    <div className="text-sm text-slate-600 dark:text-slate-400 mb-4 flex items-center gap-1 flex-wrap">
++      <button
++        onClick={handleNavigateToParent}
++        className="hover:text-slate-900 dark:hover:text-slate-200 transition"
++        title="Parent directory"
++      >
++        ↑
++      </button>
++
++      {breadcrumbs.map((crumb, index) => (
++        <div key={index} className="flex items-center gap-1">
++          <span>/</span>
++          <button
++            onClick={() => handleNavigateTo(crumb.path)}
++            className="hover:text-slate-900 dark:hover:text-slate-200 hover:underline transition"
++          >
++            {crumb.label}
++          </button>
++        </div>
++      ))}
++    </div>
++  )
++}
