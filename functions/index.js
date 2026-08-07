@@ -29,6 +29,7 @@ const { getScanStatus } = require('./getScanStatus');
 const { scanResults } = require('./scanResults');
 const { startScanScheduled } = require('./startScanScheduled');
 const { download } = require('./download');
+const { tagNewFiles } = require('./tagNewFiles');
 
 module.exports = {
   startScan,
@@ -36,4 +37,5 @@ module.exports = {
   scanResults,
   startScanScheduled,
   download,
+  tagNewFiles,
 };
