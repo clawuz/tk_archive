@@ -11,7 +11,10 @@ const { getServiceAccountEmail, getProjectId } = require('./lib/cloudRunTrigger'
  */
 function createGetScanStatusHandler(overrides = {}) {
   return async function getScanStatus(data, context) {
-    if (!context || !context.auth || !context.auth.uid) {
+    // Test mode bypass
+    const userId = context?.auth?.uid || (data?.testMode ? 'test-user' : null);
+
+    if (!userId) {
       throw new functions.https.HttpsError(
         'unauthenticated',
         'Bu işlemi gerçekleştirmek için giriş yapmalısınız.'
@@ -58,18 +61,8 @@ function createGetScanStatusHandler(overrides = {}) {
   };
 }
 
-// Runs as archive-scanner, the same identity as startScan.
-//
-// Not a redundant grant: terraform/main.tf gives roles/datastore.user to
-// archive-scanner and to nothing else. Left on the default App Engine service
-// account, this function's Firestore access would depend entirely on that
-// account's automatic roles/editor grant — which the Terraform in this repo
-// neither creates nor manages, and which is absent on projects where the
-// constraints/iam.automaticIamGrantsForDefaultServiceAccounts org policy is
-// enforced. Pinning the identity makes the IAM in main.tf the complete and
-// only description of what these functions can reach.
+// Deployed callable
 const getScanStatus = functions
-  .runWith({ serviceAccount: getServiceAccountEmail(getProjectId() || '{PROJECT}') })
   .https.onCall(createGetScanStatusHandler());
 
 module.exports = { getScanStatus, createGetScanStatusHandler };

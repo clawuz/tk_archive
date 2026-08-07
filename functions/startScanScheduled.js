@@ -200,11 +200,8 @@ function createStartScanScheduledHandler(overrides = {}) {
   };
 }
 
-// Deployed HTTP function. Runs as archive-scanner so it can call the Cloud Run
-// Admin API, exactly like startScan. GCLOUD_PROJECT is injected by the
-// runtime — no project id or credential is hardcoded here.
+// Deployed HTTP function
 const startScanScheduled = functions
-  .runWith({ serviceAccount: getServiceAccountEmail(getProjectId() || '{PROJECT}') })
   .https.onRequest(createStartScanScheduledHandler());
 
 module.exports = { startScanScheduled, createStartScanScheduledHandler };

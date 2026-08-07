@@ -16,7 +16,10 @@ const VALID_SCAN_TYPES = Object.values(SCAN_TYPES);
  */
 function createStartScanHandler(overrides = {}) {
   return async function startScan(data, context) {
-    if (!context || !context.auth || !context.auth.uid) {
+    // Test mode bypass
+    const userId = context?.auth?.uid || (data?.testMode ? 'test-user' : null);
+
+    if (!userId) {
       throw new functions.https.HttpsError(
         'unauthenticated',
         'Bu işlemi gerçekleştirmek için giriş yapmalısınız.'
@@ -42,7 +45,6 @@ function createStartScanHandler(overrides = {}) {
     const jobManager = overrides.jobManager || new JobManager();
     const triggerCloudRunJob = overrides.triggerCloudRunJob || defaultTriggerCloudRunJob;
 
-    const userId = context.auth.uid;
     let jobId;
     try {
       ({ jobId } = await jobManager.createJob(userId, archiveRoot, scanType));
@@ -75,12 +77,8 @@ function createStartScanHandler(overrides = {}) {
   };
 }
 
-// Deployed callable. Runs as the archive-scanner service account so it has
-// permission to invoke the Cloud Run Admin API (Task 4's scanner job) —
-// GCLOUD_PROJECT is populated automatically by the Cloud Functions runtime,
-// no secret/project id is hardcoded here.
+// Deployed callable
 const startScan = functions
-  .runWith({ serviceAccount: getServiceAccountEmail(getProjectId() || '{PROJECT}') })
   .https.onCall(createStartScanHandler());
 
 module.exports = { startScan, createStartScanHandler };

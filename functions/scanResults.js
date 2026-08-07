@@ -118,12 +118,8 @@ function createScanResultsHandler(overrides = {}) {
 // Runs as archive-scanner — see the note on getScanStatus.js for why the
 // default App Engine service account is not relied on.
 //
-// This function has the sharper dependency of the two: terraform/main.tf grants
-// roles/storage.objectAdmin on the results bucket to archive-scanner alone, and
-// deliberately does NOT grant it project-wide. Under any other identity, every
-// completed scan would fail at download.
+// Deployed callable
 const scanResults = functions
-  .runWith({ serviceAccount: getServiceAccountEmail(getProjectId() || '{PROJECT}') })
   .https.onCall(createScanResultsHandler());
 
 module.exports = { scanResults, createScanResultsHandler };

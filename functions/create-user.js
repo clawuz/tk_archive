@@ -3,7 +3,7 @@ const serviceAccount = require('./config/serviceAccountKey.json');
 
 admin.initializeApp({
   credential: admin.credential.cert(serviceAccount),
-  projectId: 'tk-archive-cd9d0'
+  projectId: 'tk-archive-dam'
 });
 
 admin.auth().createUser({

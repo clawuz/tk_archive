@@ -63,6 +63,10 @@ export interface DAMFile {
     generatedAt: number
   }
 
+  // Preview fields (Tasks 1-4)
+  streamable?: boolean
+  previewUrl?: string
+
   // Scan tracking
   scanId: string
   lastScanAt: number

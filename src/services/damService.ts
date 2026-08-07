@@ -16,6 +16,7 @@ import {
   limit,
   Query,
   DocumentSnapshot,
+  Timestamp,
 } from 'firebase/firestore'
 import { db } from '../firebase'
 import {
@@ -59,14 +60,16 @@ function formatDate(ms: number): string {
  * Convert DAMFile to DAMFileUI with computed properties
  */
 function enrichFile(file: DAMFile): DAMFileUI {
+  const modifiedAt = convertTimestamp(file.modifiedAt)
   return {
     ...file,
+    modifiedAt,
     sizeFormatted: formatFileSize(file.size),
-    dateFormatted: formatDate(file.modifiedAt),
+    dateFormatted: formatDate(modifiedAt),
     thumbnailUrl: file.thumbnail?.url || '/placeholder-thumbnail.jpg',
     sourceLabel: file.source === 'local' ? 'Yerel' : 'Google Drive',
     isExpired: file.license?.expirationDate
-      ? file.license.expirationDate < Date.now()
+      ? convertTimestamp(file.license.expirationDate) < Date.now()
       : false,
   }
 }
@@ -112,7 +115,20 @@ export async function searchFiles(
     const snapshot = await getDocs(
       query(collection(db, FILES_COLLECTION), ...queryConstraints)
     )
-    let files = snapshot.docs.map((doc) => enrichFile(doc.data() as DAMFile))
+    let files = snapshot.docs.map((doc) => {
+      const data = doc.data() as DAMFile
+      // Convert Timestamp objects to milliseconds
+      if (data.modifiedAt && typeof data.modifiedAt === 'object' && 'toMillis' in data.modifiedAt) {
+        data.modifiedAt = (data.modifiedAt as any).toMillis()
+      }
+      if (data.createdAt && typeof data.createdAt === 'object' && 'toMillis' in data.createdAt) {
+        data.createdAt = (data.createdAt as any).toMillis()
+      }
+      if (data.uploadedAt && typeof data.uploadedAt === 'object' && 'toMillis' in data.uploadedAt) {
+        data.uploadedAt = (data.uploadedAt as any).toMillis()
+      }
+      return enrichFile(data)
+    })
 
     // Post-query filtering (for complex filters)
     if (filters.sources && filters.sources.length > 0) {
@@ -147,7 +163,18 @@ export async function getFile(fileId: string): Promise<DAMFileUI | null> {
     const docSnap = await getDoc(docRef)
 
     if (docSnap.exists()) {
-      return enrichFile(docSnap.data() as DAMFile)
+      const data = docSnap.data() as DAMFile
+      // Convert Timestamp objects to milliseconds
+      if (data.modifiedAt && typeof data.modifiedAt === 'object' && 'toMillis' in data.modifiedAt) {
+        data.modifiedAt = (data.modifiedAt as any).toMillis()
+      }
+      if (data.createdAt && typeof data.createdAt === 'object' && 'toMillis' in data.createdAt) {
+        data.createdAt = (data.createdAt as any).toMillis()
+      }
+      if (data.uploadedAt && typeof data.uploadedAt === 'object' && 'toMillis' in data.uploadedAt) {
+        data.uploadedAt = (data.uploadedAt as any).toMillis()
+      }
+      return enrichFile(data)
     }
     return null
   } catch (error) {
@@ -219,6 +246,16 @@ export async function deleteFile(fileId: string): Promise<void> {
 // ============================================================================
 
 /**
+ * Convert Firestore Timestamp to milliseconds
+ */
+function convertTimestamp(value: any): number {
+  if (value instanceof Timestamp) {
+    return value.toMillis()
+  }
+  return value
+}
+
+/**
  * Get scan history
  */
 export async function getScanHistory(limit_count: number = 20): Promise<DAMScan[]> {
@@ -229,7 +266,14 @@ export async function getScanHistory(limit_count: number = 20): Promise<DAMScan[
       limit(limit_count)
     )
     const snapshot = await getDocs(q)
-    return snapshot.docs.map((doc) => doc.data() as DAMScan)
+    return snapshot.docs.map((doc) => {
+      const data = doc.data() as DAMScan
+      return {
+        ...data,
+        startedAt: convertTimestamp(data.startedAt),
+        completedAt: data.completedAt ? convertTimestamp(data.completedAt) : undefined,
+      }
+    })
   } catch (error) {
     console.error('Error getting scan history:', error)
     throw error
@@ -249,7 +293,13 @@ export async function getLatestScan(source: 'local' | 'drive'): Promise<DAMScan 
       limit(1)
     )
     const snapshot = await getDocs(q)
-    return snapshot.docs[0]?.data() as DAMScan
+    const data = snapshot.docs[0]?.data() as DAMScan
+    if (!data) return null
+    return {
+      ...data,
+      startedAt: convertTimestamp(data.startedAt),
+      completedAt: data.completedAt ? convertTimestamp(data.completedAt) : undefined,
+    }
   } catch (error) {
     console.error('Error getting latest scan:', error)
     throw error

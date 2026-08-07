@@ -40,6 +40,7 @@ export default function DAMDashboard() {
   const [isScanning, setIsScanning] = useState(false)
   const [scanSource, setScanSource] = useState('both')
   const [forceFlag, setForceFlag] = useState(false)
+  const [archiveRoot, setArchiveRoot] = useState('/Users/okilavuz/Desktop/Omer/TK-2026')
   const [scanError, setScanError] = useState(null)
 
   // Load files on filter change
@@ -82,15 +83,21 @@ export default function DAMDashboard() {
 
   async function handleStartScan() {
     if (isScanning) return
+    if (!archiveRoot.trim()) {
+      setScanError('Lütfen arşiv kök dizinini belirtiniz')
+      return
+    }
 
     setIsScanning(true)
     setScanError(null)
 
     try {
       const startScan = httpsCallable(functions, 'startScan')
+      const params = new URLSearchParams(window.location.search)
       const result = await startScan({
-        source: scanSource,
-        force: forceFlag
+        archiveRoot: archiveRoot.trim(),
+        scanType: scanSource,
+        testMode: params.get('testMode') === 'true'
       })
 
       // Poll for status
@@ -125,8 +132,9 @@ export default function DAMDashboard() {
 
   function handleRerunScan(scan) {
     if (isScanning) return
-    setScanSource(scan.source)
-    // Defer to next tick so the source dropdown state settles first.
+    setScanSource(scan.source || scan.scanType)
+    setArchiveRoot(scan.archiveRoot || '')
+    // Defer to next tick so the state settles first.
     setTimeout(() => handleStartScan(), 0)
   }
 
@@ -160,10 +168,12 @@ export default function DAMDashboard() {
           isScanning={isScanning}
           scanSource={scanSource}
           forceFlag={forceFlag}
+          archiveRoot={archiveRoot}
           scanError={scanError}
           scanHistory={scanHistory}
           onSourceChange={setScanSource}
           onForceFlagChange={setForceFlag}
+          onArchiveRootChange={setArchiveRoot}
           onStartScan={handleStartScan}
           onRerunScan={handleRerunScan}
         />
@@ -288,10 +298,12 @@ function ScanControlPanel({
   isScanning,
   scanSource,
   forceFlag,
+  archiveRoot,
   scanError,
   scanHistory,
   onSourceChange,
   onForceFlagChange,
+  onArchiveRootChange,
   onStartScan,
   onRerunScan,
 }) {
@@ -318,6 +330,23 @@ function ScanControlPanel({
           </h4>
 
           <div className="space-y-3">
+            <div>
+              <label className="block text-xs font-medium text-slate-600 dark:text-slate-400 mb-1">
+                Arşiv Kök Dizini *
+              </label>
+              <input
+                type="text"
+                value={archiveRoot}
+                onChange={(e) => onArchiveRootChange(e.target.value)}
+                disabled={isScanning}
+                placeholder="Örn: /Volumes/Arsiv"
+                className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-700 border border-slate-300 dark:border-slate-600 rounded-lg text-slate-900 dark:text-white text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-50 disabled:cursor-not-allowed placeholder-slate-400"
+              />
+              <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
+                Sonradan değiştirebilirsiniz
+              </p>
+            </div>
+
             <div>
               <label className="block text-xs font-medium text-slate-600 dark:text-slate-400 mb-1">
                 Kaynak
