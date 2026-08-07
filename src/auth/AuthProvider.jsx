@@ -13,15 +13,6 @@ export function AuthProvider({ children }) {
   const [domainError, setDomainError] = useState(false)
 
   useEffect(() => {
-    // Test mode: skip authentication if ?testMode=true in URL
-    const params = new URLSearchParams(window.location.search)
-    if (params.get('testMode') === 'true') {
-      setUser({ uid: 'test-user', email: 'test@tribalistanbul.com' })
-      setUserProfile({ role: 'admin', department: 'archive' })
-      setLoading(false)
-      return
-    }
-
     return onAuthStateChanged(auth, async (firebaseUser) => {
       if (firebaseUser) {
         if (!isAllowedDomain(firebaseUser.email)) {
