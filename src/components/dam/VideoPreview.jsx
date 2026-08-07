@@ -31,15 +31,15 @@ export default function VideoPreview({ file }) {
     }
   }, [file]);
 
-  if (!canPreview) return null;
+  if (!file || (!canPreview && !error)) return null;
 
   return (
     <div className="bg-black rounded-lg overflow-hidden mb-4">
       {error ? (
-        <div className="h-96 flex items-center justify-center bg-slate-900 text-white">
+        <div className="h-96 flex items-center justify-center bg-slate-100 dark:bg-slate-900 text-slate-900 dark:text-white">
           <div className="text-center">
             <p className="text-lg mb-2">⚠️ {error}</p>
-            <p className="text-sm text-slate-400">Size: {getFileSize(file.size)}</p>
+            <p className="text-sm text-slate-600 dark:text-slate-400">Size: {getFileSize(file.size)}</p>
           </div>
         </div>
       ) : file.source === 'drive' ? (
@@ -61,9 +61,9 @@ export default function VideoPreview({ file }) {
       )}
 
       {/* Video info */}
-      <div className="bg-slate-900 text-white p-3 text-sm">
-        <p className="font-mono text-xs text-slate-400">{file.mimeType}</p>
-        <p className="text-slate-300">Size: {getFileSize(file.size)}</p>
+      <div className="bg-slate-100 dark:bg-slate-900 text-slate-900 dark:text-white p-3 text-sm">
+        <p className="font-mono text-xs text-slate-600 dark:text-slate-400">{file.mimeType}</p>
+        <p className="text-slate-700 dark:text-slate-300">Size: {getFileSize(file.size)}</p>
       </div>
     </div>
   );
