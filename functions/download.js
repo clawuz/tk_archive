@@ -1,19 +1,45 @@
 const functions = require('firebase-functions');
+const admin = require('firebase-admin');
 const fs = require('fs');
 const path = require('path');
 
 const ALLOWED_PATHS = [
   '/Users/okilavuz/Desktop/Omer/TK-2026',
-  '/Volumes'
+  '/Volumes/ArchiveStorage'
 ];
 
 function validatePath(filePath) {
-  const normalized = path.normalize(filePath);
-  return ALLOWED_PATHS.some(basePath => normalized.startsWith(basePath));
+  try {
+    const realPath = fs.realpathSync(filePath); // Resolves symlinks
+
+    return ALLOWED_PATHS.some(basePath => {
+      const realBase = fs.realpathSync(basePath);
+      // Check if realPath is exactly under basePath (not just prefix match)
+      return realPath === realBase ||
+             realPath.startsWith(realBase + path.sep);
+    });
+  } catch (err) {
+    return false; // File doesn't exist or symlink broken
+  }
 }
 
-exports.download = functions.https.onRequest((req, res) => {
+exports.download = functions.https.onRequest(async (req, res) => {
   try {
+    // Verify Firebase ID token
+    const authHeader = req.headers.authorization;
+    if (!authHeader) {
+      return res.status(403).json({ error: 'Missing authorization header' });
+    }
+
+    const token = authHeader.split(' ')[1];
+    let decodedToken;
+    try {
+      decodedToken = await admin.auth().verifyIdToken(token);
+    } catch (err) {
+      return res.status(403).json({ error: 'Invalid token' });
+    }
+
+    // User authenticated - continue with download logic
     const { fileId, path: filePath } = req.query;
 
     if (!filePath) {
