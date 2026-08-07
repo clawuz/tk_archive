@@ -2,17 +2,20 @@ import { useMemo } from 'react'
 import { getParentDirectory } from '../../services/pathResolver'
 
 export default function FolderBrowser({ file, onNavigate }) {
-  if (file?.source !== 'local') return null
-
   const filePath = file?.path || ''
 
   const breadcrumbs = useMemo(() => {
+    if (file?.source !== 'local') return []
+
     const parts = filePath.split('/').filter(Boolean)
     return parts.map((part, index) => ({
       label: part,
       path: '/' + parts.slice(0, index + 1).join('/')
     }))
-  }, [filePath])
+  }, [filePath, file?.source])
+
+  // Early return now safe - comes after all hooks
+  if (file?.source !== 'local') return null
 
   const handleNavigateToParent = () => {
     const parent = getParentDirectory(filePath)
