@@ -2,6 +2,7 @@ import { useState } from 'react'
 import damService from '../../services/damService'
 import VideoPreview from './VideoPreview'
 import FileDownload from './FileDownload'
+import FolderBrowser from './FolderBrowser'
 
 export default function FileDetail({
   file,
@@ -11,6 +12,13 @@ export default function FileDetail({
 }) {
   const [newTag, setNewTag] = useState('')
   const [addingTag, setAddingTag] = useState(false)
+
+  function handleFolderNavigate(path) {
+    // Trigger navigation to folder
+    // Parent component (DAMDashboard) can handle filtering/navigation
+    console.log('Navigate to folder:', path)
+    onShowPreview?.(null)
+  }
 
   async function handleAddTag() {
     if (newTag.trim()) {
@@ -69,6 +77,9 @@ export default function FileDetail({
 
         {/* Video Preview Player */}
         <VideoPreview file={file} />
+
+        {/* Folder Navigation Breadcrumb */}
+        <FolderBrowser file={file} onNavigate={handleFolderNavigate} />
 
         {/* File Info */}
         <div>
