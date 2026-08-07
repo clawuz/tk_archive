@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import damService from '../../services/damService'
 import VideoPreview from './VideoPreview'
+import FileDownload from './FileDownload'
 
 export default function FileDetail({
   file,
@@ -234,13 +235,7 @@ export default function FileDetail({
         >
           👁️ Önizleme
         </button>
-        <a
-          href={file.path}
-          download
-          className="block w-full px-4 py-2 bg-slate-200 hover:bg-slate-300 dark:bg-slate-700 dark:hover:bg-slate-600 text-slate-900 dark:text-white rounded-lg font-medium transition text-center text-sm"
-        >
-          ⬇️ İndir
-        </a>
+        <FileDownload file={file} />
       </div>
     </div>
   )
