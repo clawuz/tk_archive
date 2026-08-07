@@ -28,10 +28,12 @@ const { startScan } = require('./startScan');
 const { getScanStatus } = require('./getScanStatus');
 const { scanResults } = require('./scanResults');
 const { startScanScheduled } = require('./startScanScheduled');
+const { download } = require('./download');
 
 module.exports = {
   startScan,
   getScanStatus,
   scanResults,
   startScanScheduled,
+  download,
 };
