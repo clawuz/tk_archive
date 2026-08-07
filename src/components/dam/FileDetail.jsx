@@ -12,12 +12,31 @@ export default function FileDetail({
 }) {
   const [newTag, setNewTag] = useState('')
   const [addingTag, setAddingTag] = useState(false)
+  const [files, setFiles] = useState([])
+  const [loading, setLoading] = useState(false)
 
-  function handleFolderNavigate(path) {
-    // Trigger navigation to folder
-    // Parent component (DAMDashboard) can handle filtering/navigation
-    console.log('Navigate to folder:', path)
-    onShowPreview?.(null)
+  const handleFolderNavigate = async (folderPath) => {
+    try {
+      setLoading(true)
+      // Search for files with path starting with folderPath
+      const result = await damService.searchFiles({
+        sources: ['local'],
+        query: folderPath,
+        limit: 100,
+      })
+
+      // Filter to files in this folder and subfolders
+      const filesInFolder = result.files.filter(f =>
+        f.path.startsWith(folderPath + '/')
+      )
+
+      // Update gallery to show filtered files
+      setFiles(filesInFolder)
+    } catch (err) {
+      console.error('Navigation failed:', err)
+    } finally {
+      setLoading(false)
+    }
   }
 
   async function handleAddTag() {
