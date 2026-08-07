@@ -21,7 +21,7 @@ export function resolvePath(file: DAMFile): string | null {
       console.error(`Path validation failed: ${file.path}`)
       return null
     }
-    return `/api/download?fileId=${file.fileId}&path=${encodeURIComponent(file.path)}`
+    return file.path // Just the path, no API
   }
 
   return null

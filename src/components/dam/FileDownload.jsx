@@ -2,105 +2,81 @@ import { useState } from 'react'
 import { resolvePath } from '../../services/pathResolver'
 
 export default function FileDownload({ file }) {
-  const [downloading, setDownloading] = useState(false)
+  const [copied, setCopied] = useState(false)
   const [error, setError] = useState(null)
-  const [progress, setProgress] = useState(0)
 
-  const handleDownload = async () => {
-    try {
-      setDownloading(true)
-      setError(null)
-      setProgress(0)
+  const filePath = resolvePath(file)
 
-      const downloadUrl = resolvePath(file)
-      if (!downloadUrl) {
-        setError('Cannot download this file')
-        return
-      }
+  const handleCopyPath = () => {
+    if (!filePath) {
+      setError('Cannot copy path for this file')
+      return
+    }
+    navigator.clipboard.writeText(filePath)
+    setCopied(true)
+    setTimeout(() => setCopied(false), 2000)
+  }
 
-      if (file.source === 'drive') {
-        window.open(downloadUrl, '_blank')
-        setDownloading(false)
-        return
-      }
-
-      const response = await fetch(downloadUrl)
-      if (!response.ok) {
-        throw new Error(`Download failed: ${response.statusText}`)
-      }
-
-      const contentLength = response.headers.get('content-length')
-      const total = parseInt(contentLength, 10)
-
-      const reader = response.body.getReader()
-      const chunks = []
-      let receivedLength = 0
-
-      while (true) {
-        const { done, value } = await reader.read()
-        if (done) break
-
-        chunks.push(value)
-        receivedLength += value.length
-
-        if (total) {
-          setProgress(Math.round((receivedLength / total) * 100))
-        }
-      }
-
-      const blob = new Blob(chunks, { type: file.mimeType })
-      const url = URL.createObjectURL(blob)
-      const link = document.createElement('a')
-      link.href = url
-      link.download = file.name
-      document.body.appendChild(link)
-      link.click()
-      document.body.removeChild(link)
-      URL.revokeObjectURL(url)
-
-      setDownloading(false)
-      setProgress(0)
-    } catch (err) {
-      setError(err.message)
-      setDownloading(false)
-      console.error('Download error:', err)
+  const handleOpenInDrive = () => {
+    if (file.source === 'drive' && filePath) {
+      window.open(filePath, '_blank')
     }
   }
 
+  if (!filePath) {
+    return (
+      <div>
+        <p className="text-red-600 dark:text-red-400 text-sm">Cannot access this file</p>
+      </div>
+    )
+  }
+
+  // Google Drive files: open in Drive
+  if (file.source === 'drive') {
+    return (
+      <div>
+        <button
+          onClick={handleOpenInDrive}
+          className="w-full bg-blue-600 hover:bg-blue-700 text-white font-semibold py-2 px-4 rounded-lg transition flex items-center justify-center gap-2"
+        >
+          <span>☁️</span> Open in Google Drive
+        </button>
+      </div>
+    )
+  }
+
+  // Local files: show path display
   return (
-    <div>
+    <div className="space-y-3">
+      <div className="bg-slate-100 dark:bg-slate-800 rounded-lg p-4">
+        <p className="text-sm font-semibold text-slate-700 dark:text-slate-300 mb-2">
+          📍 Dosya Konumu
+        </p>
+        <p className="text-xs text-slate-600 dark:text-slate-400 break-all font-mono bg-white dark:bg-slate-900 p-3 rounded border border-slate-200 dark:border-slate-700">
+          {filePath}
+        </p>
+      </div>
+
       <button
-        onClick={handleDownload}
-        disabled={downloading}
-        className="w-full bg-blue-600 hover:bg-blue-700 disabled:bg-slate-400 text-white font-semibold py-2 px-4 rounded-lg transition flex items-center justify-center gap-2"
+        onClick={handleCopyPath}
+        className={`w-full font-semibold py-2 px-4 rounded-lg transition flex items-center justify-center gap-2 ${
+          copied
+            ? 'bg-green-600 hover:bg-green-700 text-white'
+            : 'bg-slate-600 hover:bg-slate-700 text-white'
+        }`}
       >
-        {downloading ? (
-          <>
-            <span className="animate-spin">⟳</span>
-            {progress}%
-          </>
-        ) : file.source === 'drive' ? (
-          <>
-            <span>☁️</span> Open in Google Drive
-          </>
-        ) : (
-          <>
-            <span>⬇️</span> Download
-          </>
-        )}
+        <span>{copied ? '✓' : '📋'}</span>
+        {copied ? 'Kopyalandı' : 'Kopyala Yolu'}
       </button>
 
-      {error && (
-        <p className="text-red-600 dark:text-red-400 text-sm mt-2">{error}</p>
-      )}
+      <div className="bg-blue-50 dark:bg-blue-900/30 border border-blue-200 dark:border-blue-800 rounded-lg p-3">
+        <p className="text-xs text-blue-800 dark:text-blue-300">
+          💡 Dosyayı açmak için yolu Finder'da kullanın veya doğrudan sistem tarayıcısında açın.
+        </p>
+      </div>
 
-      {downloading && (
-        <div className="mt-2 bg-slate-200 dark:bg-slate-700 rounded h-2 overflow-hidden">
-          <div
-            className="bg-blue-600 h-full transition-all"
-            style={{ width: `${progress}%` }}
-          />
-        </div>
+      {error && (
+        <p className="text-red-600 dark:text-red-400 text-sm">{error}</p>
       )}
     </div>
   )
