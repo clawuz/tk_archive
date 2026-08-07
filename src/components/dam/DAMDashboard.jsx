@@ -24,7 +24,7 @@ export default function DAMDashboard() {
     tags: [],
     sortBy: 'modifiedAt',
     sortOrder: 'desc',
-    limit: 50,
+    limit: 600,
   })
 
   // Detail panel state
