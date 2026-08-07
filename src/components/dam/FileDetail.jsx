@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import damService from '../../services/damService'
+import VideoPreview from './VideoPreview'
 
 export default function FileDetail({
   file,
@@ -64,6 +65,9 @@ export default function FileDetail({
             </svg>
           </div>
         </div>
+
+        {/* Video Preview Player */}
+        <VideoPreview file={file} />
 
         {/* File Info */}
         <div>
