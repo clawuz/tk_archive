@@ -6,12 +6,14 @@
  */
 
 const fs = require('fs');
+const os = require('os');
 const path = require('path');
 const crypto = require('crypto');
-const { exec } = require('child_process');
+const { exec, execFile } = require('child_process');
 const { promisify } = require('util');
 
 const execPromise = promisify(exec);
+const execFilePromise = promisify(execFile);
 
 console.log('📦 Loading firebase-admin...');
 let admin;
@@ -94,6 +96,19 @@ async function scanDirectory(dirPath, scanId) {
             }
           }
 
+          // Generate a Quick Look thumbnail for images/documents/PDFs
+          let thumbnail = null;
+          if (!isVideoFile(fullPath) && canGenerateThumbnail(fullPath)) {
+            const thumbData = await generateThumbnail(fullPath, fileId);
+            if (thumbData) {
+              thumbnail = {
+                url: `data:image/png;base64,${thumbData}`,
+                generated: true,
+                generatedAt: Date.now()
+              };
+            }
+          }
+
           const fileDoc = {
             fileId,
             name: entry.name,
@@ -106,6 +121,7 @@ async function scanDirectory(dirPath, scanId) {
             hash,
             tags: [],
             videoPreviewFrames: videoPreviewFrames || null,
+            thumbnail: thumbnail || null,
             needs_tagging: !!videoPreviewFrames,
             createdAt: stat.birthtime.getTime(),
             modifiedAt: stat.mtime.getTime(),
@@ -174,6 +190,37 @@ function getMimeType(ext) {
 function isVideoFile(filePath) {
   const ext = path.extname(filePath).toLowerCase().slice(1);
   return ['mp4', 'mov', 'mkv', 'avi', 'webm', 'flv', 'wmv', 'mts', 'm2ts'].includes(ext);
+}
+
+// File types macOS Quick Look can render a preview for. Covers images,
+// documents, PDFs, and Office files without needing per-format libraries.
+const THUMBNAIL_EXTENSIONS = new Set([
+  'jpg', 'jpeg', 'png', 'gif', 'webp', 'tiff', 'tif', 'bmp', 'heic',
+  'pdf', 'psd', 'ai', 'eps',
+  'doc', 'docx', 'xls', 'xlsx', 'xlsm', 'ppt', 'pptx', 'key', 'numbers',
+]);
+
+function canGenerateThumbnail(filePath) {
+  const ext = path.extname(filePath).toLowerCase().slice(1);
+  return THUMBNAIL_EXTENSIONS.has(ext);
+}
+
+async function generateThumbnail(filePath, fileId) {
+  const tmpDir = path.join(os.tmpdir(), `thumb-${fileId}`);
+  try {
+    fs.mkdirSync(tmpDir, { recursive: true });
+    await execFilePromise('qlmanage', ['-t', '-s', '240', '-o', tmpDir, filePath], { timeout: 15000 });
+
+    const outputFiles = fs.readdirSync(tmpDir).filter(f => f.endsWith('.png'));
+    if (outputFiles.length === 0) return null;
+
+    const thumbData = fs.readFileSync(path.join(tmpDir, outputFiles[0])).toString('base64');
+    return thumbData;
+  } catch (err) {
+    return null;
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
 }
 
 async function getVideoDuration(videoPath) {
