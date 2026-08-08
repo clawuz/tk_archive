@@ -59,7 +59,7 @@ function formatDate(ms: number): string {
  */
 function enrichFile(file: DAMFile): DAMFileUI {
   const modifiedAt = convertTimestamp(file.modifiedAt)
-  return {
+  const enriched: DAMFileUI = {
     ...file,
     modifiedAt,
     sizeFormatted: formatFileSize(file.size),
@@ -70,6 +70,13 @@ function enrichFile(file: DAMFile): DAMFileUI {
       ? convertTimestamp(file.license.expirationDate) < Date.now()
       : false,
   }
+
+  // Explicitly preserve videoPreviewFrames
+  if (file.videoPreviewFrames) {
+    enriched.videoPreviewFrames = file.videoPreviewFrames
+  }
+
+  return enriched
 }
 
 // ============================================================================
@@ -128,6 +135,12 @@ export async function searchFiles(
       if (!data.source) {
         data.source = 'drive'
       }
+
+      // DEBUG: Log video files with/without frames
+      if (data.mimeType?.includes('video')) {
+        console.log(`[searchFiles] ${data.name}: frames=${data.videoPreviewFrames?.length ?? 0}, keys=${Object.keys(data).join(',')}`);
+      }
+
       return enrichFile(data)
     })
 
