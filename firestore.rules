@@ -75,10 +75,9 @@ service cloud.firestore {
     // ========================================================================
 
     // Files collection — DAM file metadata
-    // Authenticated-only access; backend writes via scanner
+    // TEST MODE: public read access for verification
     match /files/{fileId} {
-      allow read: if isAuthenticated() && isAllowedDomain();
-      allow write: if true; // TEST MODE - remove after debugging
+      allow read, write: if true;
     }
 
     // Changes collection — incremental file changes

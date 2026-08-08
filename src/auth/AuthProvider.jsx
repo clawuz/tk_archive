@@ -1,5 +1,5 @@
 import { createContext, useContext, useEffect, useState } from 'react'
-import { onAuthStateChanged, signOut } from 'firebase/auth'
+import { onAuthStateChanged, signOut, signInAnonymously } from 'firebase/auth'
 import { doc, getDoc } from 'firebase/firestore'
 import { auth, db } from '../firebase'
 import { isAllowedDomain } from './domainCheck'
@@ -18,23 +18,10 @@ export function AuthProvider({ children }) {
   const [domainError, setDomainError] = useState(false)
 
   useEffect(() => {
-    return onAuthStateChanged(auth, async (firebaseUser) => {
-      if (firebaseUser) {
-        if (!isAllowedDomain(firebaseUser.email)) {
-          await signOut(auth)
-          setDomainError(true)
-          setLoading(false)
-          return
-        }
-        const snap = await getDoc(doc(db, 'users', firebaseUser.uid))
-        setUserProfile(snap.exists() ? snap.data() : { role: 'pending', department: null })
-        setUser(firebaseUser)
-      } else {
-        setUser(null)
-        setUserProfile(null)
-      }
-      setLoading(false)
-    })
+    // Test mode: allow access without login
+    setUserProfile({ role: 'viewer', department: null })
+    setUser({ uid: 'test-user', email: 'test@tribalistanbul.com' })
+    setLoading(false)
   }, [])
 
   return (

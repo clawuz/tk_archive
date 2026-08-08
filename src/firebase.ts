@@ -3,14 +3,14 @@ import { getAuth, Auth } from 'firebase/auth'
 import { getFirestore, Firestore } from 'firebase/firestore'
 import { getFunctions, Functions } from 'firebase/functions'
 
-// Firebase config for tk-archive-dam (TK Archive DAM production)
+// Firebase config for tk-archive-cd9d0 (TK Archive DAM - production)
 const firebaseConfig = {
-  apiKey: 'AIzaSyD-SRNAkjh2qtuuUrhBjWxJ5Y0XSnXDRxo',
-  authDomain: 'tk-archive-dam.firebaseapp.com',
-  projectId: 'tk-archive-dam',
-  storageBucket: 'tk-archive-dam.firebasestorage.app',
-  messagingSenderId: '627649269834',
-  appId: '1:627649269834:web:953ad9888ab8f2628696b3',
+  apiKey: 'AIzaSyBa4YK3b9b-3GSaF4zEQKDKE5Z0rN5vxMk',
+  authDomain: 'tk-archive-cd9d0.firebaseapp.com',
+  projectId: 'tk-archive-cd9d0',
+  storageBucket: 'tk-archive-cd9d0.appspot.com',
+  messagingSenderId: '896824491699',
+  appId: '1:896824491699:web:f54d9d2af7a7cfc86e3e44',
 }
 
 const app: FirebaseApp = initializeApp(firebaseConfig)
