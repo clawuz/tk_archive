@@ -20,18 +20,10 @@ export async function resolveThumbnail(file: DAMFile): Promise<ThumbnailResult> 
 
   let result: ThumbnailResult;
 
-  // DEBUG: Log file info for first few videos
-  if (file.mimeType?.includes('video')) {
-    console.log(`[Thumbnail] ${file.name}: hasFrames=${!!file.videoPreviewFrames?.length}, thumbnail=${!!file.thumbnail?.url}, source=${file.source}`);
-  }
-
   // Priority 1: Video preview frame (first frame as thumbnail)
   if (file.videoPreviewFrames?.length > 0) {
-    const frameData = file.videoPreviewFrames[0].frameData;
-    const dataUrl = `data:image/jpeg;base64,${frameData}`;
-    console.log(`[Thumbnail] Using video frame for ${file.name}, dataUrl length: ${dataUrl.length}`);
     result = {
-      url: dataUrl,
+      url: `data:image/jpeg;base64,${file.videoPreviewFrames[0].frameData}`,
       source: 'firestore',
       cached: false
     };

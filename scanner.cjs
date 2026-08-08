@@ -80,7 +80,10 @@ async function scanDirectory(dirPath, scanId) {
           // Calculate hash
           const hash = await calculateHash(fullPath);
 
-          const fileId = `${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+          // Deterministic fileId based on file path — same file always
+          // gets the same ID, so re-scans update the existing document
+          // instead of creating duplicates.
+          const fileId = crypto.createHash('sha256').update(`local:${fullPath}`).digest('hex').slice(0, 32);
 
           // Extract video frames if video file
           let videoPreviewFrames = null;
@@ -275,28 +278,15 @@ async function run() {
         const file = files[idx];
         try {
           const fileRef = db.collection('files').doc(file.fileId);
-          const writeTime = Date.now();
 
-          // Log doc size for files with frames
           if (file.videoPreviewFrames) {
             const docSizeKB = (JSON.stringify(file).length / 1024).toFixed(2);
             console.log(`  📝 [${idx+1}/${files.length}] ${file.name.substring(0,40)}: ${docSizeKB} KB, ${file.videoPreviewFrames.length} frames`);
             videoWrites.push({ fileId: file.fileId, name: file.name });
           }
 
-          const setPromise = fileRef.set(file);
-          await setPromise;
+          await fileRef.set(file);
           totalWritten++;
-
-          // Immediate verification for videos
-          if (file.videoPreviewFrames && idx < 3) {
-            const verify = await fileRef.get();
-            if (verify.exists && verify.data().videoPreviewFrames) {
-              console.log(`     ✅ Verified: frames in Firestore`);
-            } else {
-              console.log(`     ⚠️  WARNING: Frames not in Firestore immediately after write!`);
-            }
-          }
         } catch (writeErr) {
           console.error(`  ❌ [${idx+1}] Failed to write ${file.name}:`, writeErr.code, writeErr.message);
           failedCount++;

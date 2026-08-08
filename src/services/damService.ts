@@ -136,11 +136,6 @@ export async function searchFiles(
         data.source = 'drive'
       }
 
-      // DEBUG: Log video files with/without frames
-      if (data.mimeType?.includes('video')) {
-        console.log(`[searchFiles] ${data.name}: frames=${data.videoPreviewFrames?.length ?? 0}, keys=${Object.keys(data).join(',')}`);
-      }
-
       return enrichFile(data)
     })
 
