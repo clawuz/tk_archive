@@ -264,39 +264,47 @@ async function run() {
     const files = await scanDirectory(ARCHIVE_ROOT, scanId);
     console.log(`\n📁 Found ${files.length} files\n`);
 
-    // Write files to Firestore (batch)
+    // Write files to Firestore (direct writes with detailed logging)
     if (files.length > 0) {
       console.log(`💾 Writing to Firestore...`);
-      const batchSize = 500; // Firestore batch limit
       let totalWritten = 0;
+      let failedCount = 0;
+      const videoWrites = [];
 
-      for (let i = 0; i < files.length; i += batchSize) {
-        const batch = db.batch();
-        const batchFiles = files.slice(i, i + batchSize);
-
-        for (const file of batchFiles) {
+      for (let idx = 0; idx < files.length; idx++) {
+        const file = files[idx];
+        try {
           const fileRef = db.collection('files').doc(file.fileId);
+          const writeTime = Date.now();
+
           // Log doc size for files with frames
           if (file.videoPreviewFrames) {
             const docSizeKB = (JSON.stringify(file).length / 1024).toFixed(2);
-            console.log(`  📝 ${file.name.substring(0,40)}: ${docSizeKB} KB`);
+            console.log(`  📝 [${idx+1}/${files.length}] ${file.name.substring(0,40)}: ${docSizeKB} KB, ${file.videoPreviewFrames.length} frames`);
+            videoWrites.push({ fileId: file.fileId, name: file.name });
           }
-          batch.set(fileRef, file);
-        }
 
-        try {
-          const result = await batch.commit();
-          totalWritten += batchFiles.length;
-          console.log(`  ✅ Batch ${Math.floor(i / batchSize) + 1}: ${batchFiles.length} files written (${result.length} writes)`);
-        } catch (batchErr) {
-          console.error(`  ❌ Batch ${Math.floor(i / batchSize) + 1} failed:`, batchErr);
-          console.error(`     Error code: ${batchErr.code}`);
-          console.error(`     Message: ${batchErr.message}`);
+          const setPromise = fileRef.set(file);
+          await setPromise;
+          totalWritten++;
+
+          // Immediate verification for videos
+          if (file.videoPreviewFrames && idx < 3) {
+            const verify = await fileRef.get();
+            if (verify.exists && verify.data().videoPreviewFrames) {
+              console.log(`     ✅ Verified: frames in Firestore`);
+            } else {
+              console.log(`     ⚠️  WARNING: Frames not in Firestore immediately after write!`);
+            }
+          }
+        } catch (writeErr) {
+          console.error(`  ❌ [${idx+1}] Failed to write ${file.name}:`, writeErr.code, writeErr.message);
+          failedCount++;
         }
       }
 
       const filesWithFrames = files.filter(f => f.videoPreviewFrames).length;
-      console.log(`✅ Wrote ${totalWritten} total files to Firestore`);
+      console.log(`✅ Wrote ${totalWritten} files to Firestore${failedCount > 0 ? ` (${failedCount} failed)` : ''}`);
       console.log(`📸 Files with videoPreviewFrames: ${filesWithFrames}`);
 
       // TEST: Verify one video file was written
