@@ -43,6 +43,9 @@ export interface DAMFile {
   copyright: {
     owner: string
     year: number
+    productionCompany?: string // Prodüksiyon şirketi (varsa)
+    department?: string // İlgili birim — THY içindeki kaynak departman
+    contactPerson?: string // İlgili kişi — dosyayı sağlayan/talep eden kişi
   }
   license: {
     type: LicenseType
@@ -72,11 +75,15 @@ export interface DAMFile {
     frameNumber: number
   }>
 
-  // YOLO tagging (Task 10)
-  needs_tagging?: boolean // Flag for YOLO processing
-  tagSource?: string // 'yolo-local' | other sources
+  // Auto-tagging (Claude Vision)
+  needs_tagging?: boolean // Flag for the tagNewFiles Cloud Function
+  tagSource?: string // 'claude-vision' | 'yolo-local' | other sources
   taggedAt?: number // timestamp when tags were auto-generated
   taggedBy?: string // userId who triggered tagging
+
+  // 1-2 sentence description of visual content, generated alongside tags
+  description?: string
+  descriptionSource?: string
 
   // Scan tracking
   scanId: string

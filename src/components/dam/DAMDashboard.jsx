@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { httpsCallable } from 'firebase/functions'
 import damService, { getScanHistory } from '../../services/damService'
 import { functions } from '../../firebase'
@@ -6,6 +6,9 @@ import FileGallery from './FileGallery'
 import SearchFilters from './SearchFilters'
 import FileDetail from './FileDetail'
 import ScanTimeline from './ScanTimeline'
+import HeroAnimation from './HeroAnimation'
+import GlobeLoader from './GlobeLoader'
+import VideoPreview from './VideoPreview'
 
 const SCAN_SOURCE_OPTIONS = [
   { value: 'local', label: '📂 Yerel Klasör' },
@@ -13,18 +16,32 @@ const SCAN_SOURCE_OPTIONS = [
   { value: 'both', label: '🔄 İkisi de' },
 ]
 
+// Files displayed per page vs. how many raw Firestore docs are pulled per
+// fetch — batch > page so most page turns are served from an already-loaded
+// batch instead of a fresh round trip.
+const PAGE_SIZE = 60
+const FETCH_BATCH_SIZE = 100
+
 export default function DAMDashboard() {
-  // Gallery state
-  const [files, setFiles] = useState([])
+  // Gallery state — loadedFiles accumulates every filtered file fetched so
+  // far across visited pages (an archive of thousands never loads at once;
+  // Firestore is paged with a cursor, one or two batches ahead of the page
+  // the user is on). See fetchUntil/ensurePage below.
+  const [loadedFiles, setLoadedFiles] = useState([])
+  const [pageIndex, setPageIndex] = useState(0)
   const [loading, setLoading] = useState(false)
+  const [pageLoading, setPageLoading] = useState(false)
   const [error, setError] = useState(null)
+  const cursorRef = useRef(null)
+  const rawExhaustedRef = useRef(false)
   const [filters, setFilters] = useState({
     query: '',
     sources: ['local', 'drive'],
     tags: [],
+    dateRange: null,
+    licenseType: [],
     sortBy: 'modifiedAt',
     sortOrder: 'desc',
-    limit: 600,
   })
 
   // Detail panel state
@@ -43,7 +60,7 @@ export default function DAMDashboard() {
   const [archiveRoot, setArchiveRoot] = useState('/Users/okilavuz/Desktop/Omer/TK-2026')
   const [scanError, setScanError] = useState(null)
 
-  // Load files on filter change
+  // Load the first page whenever filters change
   useEffect(() => {
     loadFiles()
   }, [filters])
@@ -53,11 +70,31 @@ export default function DAMDashboard() {
     loadScanHistory()
   }, [])
 
+  // Fetches raw batches from Firestore (via damService.searchFiles) — each
+  // batch is filtered client-side before being appended — until `buffer` has
+  // at least `minCount` files or there are no more raw documents left.
+  async function fetchUntil(minCount, buffer) {
+    let acc = buffer
+    while (acc.length < minCount && !rawExhaustedRef.current) {
+      const result = await damService.searchFiles(filters, cursorRef.current, FETCH_BATCH_SIZE)
+      cursorRef.current = result.lastDoc
+      if (result.rawCount < FETCH_BATCH_SIZE) rawExhaustedRef.current = true
+      if (result.rawCount === 0) break
+      acc = [...acc, ...result.files]
+    }
+    return acc
+  }
+
+  // Resets the pagination cursor/buffer and loads the first page (plus one
+  // page ahead, so "hasNextPage" is known without an extra round trip).
   async function loadFiles() {
+    cursorRef.current = null
+    rawExhaustedRef.current = false
+    setPageIndex(0)
     setLoading(true)
     try {
-      const result = await damService.searchFiles(filters)
-      setFiles(result.files)
+      const buffer = await fetchUntil(PAGE_SIZE * 2, [])
+      setLoadedFiles(buffer)
       setError(null)
     } catch (err) {
       setError(err.message || 'Dosyalar yüklenemedi')
@@ -66,6 +103,36 @@ export default function DAMDashboard() {
       setLoading(false)
     }
   }
+
+  // Ensures loadedFiles has enough files buffered to display targetPageIndex
+  // plus one page ahead (to know whether a "next" page exists).
+  async function ensurePage(targetPageIndex) {
+    const needed = (targetPageIndex + 2) * PAGE_SIZE
+    if (loadedFiles.length >= needed || rawExhaustedRef.current) return
+    setPageLoading(true)
+    try {
+      const buffer = await fetchUntil(needed, loadedFiles)
+      setLoadedFiles(buffer)
+    } catch (err) {
+      console.error('Sonraki sayfa yüklenemedi:', err)
+    } finally {
+      setPageLoading(false)
+    }
+  }
+
+  async function handleNextPage() {
+    const target = pageIndex + 1
+    await ensurePage(target)
+    setPageIndex(target)
+  }
+
+  function handlePrevPage() {
+    setPageIndex((p) => Math.max(0, p - 1))
+  }
+
+  const pageFiles = loadedFiles.slice(pageIndex * PAGE_SIZE, (pageIndex + 1) * PAGE_SIZE)
+  const hasNextPage = loadedFiles.length > (pageIndex + 1) * PAGE_SIZE
+  const hasPrevPage = pageIndex > 0
 
   async function loadScanHistory() {
     try {
@@ -147,16 +214,9 @@ export default function DAMDashboard() {
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-50 to-slate-100 dark:from-slate-900 dark:to-slate-950">
-      {/* Header */}
-      <div className="sticky top-0 z-40 border-b border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 shadow-sm">
-        <div className="max-w-7xl mx-auto px-6 py-4">
-          <h1 className="text-3xl font-bold text-slate-900 dark:text-white">
-            TK Archive
-          </h1>
-          <p className="text-sm text-slate-600 dark:text-slate-400 mt-1">
-            Dijital Varlık Yönetim Sistemi
-          </p>
-        </div>
+      {/* Header — the animation carries the title, so this is the only header block */}
+      <div className="sticky top-0 z-40 border-b border-slate-200 dark:border-slate-700 shadow-sm">
+        <HeroAnimation height={120} />
       </div>
 
       {/* Scan Control Section */}
@@ -185,8 +245,8 @@ export default function DAMDashboard() {
           <ScanTimeline scans={scanHistory} />
         </div>
 
-        {/* Center: File Gallery */}
-        <div className="lg:col-span-2">
+        {/* Center: File Gallery — widens to reclaim the detail panel's column when it's closed */}
+        <div className={showDetail && selectedFile ? 'lg:col-span-2' : 'lg:col-span-3'}>
           {error && (
             <div className="mb-4 p-4 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg">
               <p className="text-sm text-red-800 dark:text-red-200">{error}</p>
@@ -202,7 +262,7 @@ export default function DAMDashboard() {
             </div>
           )}
 
-          {!loading && files.length === 0 && (
+          {!loading && loadedFiles.length === 0 && (
             <div className="text-center py-12">
               <p className="text-slate-500 dark:text-slate-400">
                 Dosya bulunamadı
@@ -210,11 +270,19 @@ export default function DAMDashboard() {
             </div>
           )}
 
-          {!loading && files.length > 0 && (
+          {!loading && loadedFiles.length > 0 && (
             <FileGallery
-              files={files}
+              files={pageFiles}
+              loadedFiles={loadedFiles}
               onFileSelect={handleFileSelect}
               loading={loading}
+              onRefresh={loadFiles}
+              pageIndex={pageIndex}
+              hasNextPage={hasNextPage}
+              hasPrevPage={hasPrevPage}
+              pageLoading={pageLoading}
+              onNextPage={handleNextPage}
+              onPrevPage={handlePrevPage}
             />
           )}
         </div>
@@ -480,7 +548,10 @@ function ScanStatusCard({ scan }) {
 
       {scan.status === 'running' && (
         <div className="mt-3">
-          <div className="w-full bg-slate-100 dark:bg-slate-700 rounded-full h-1.5 overflow-hidden">
+          <div className="w-full h-36 rounded-lg overflow-hidden border border-slate-200 dark:border-slate-700">
+            <GlobeLoader />
+          </div>
+          <div className="w-full bg-slate-100 dark:bg-slate-700 rounded-full h-1.5 overflow-hidden mt-3">
             <div className="bg-blue-500 h-1.5 rounded-full w-1/3 animate-pulse"></div>
           </div>
           <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
@@ -563,11 +634,13 @@ function FilePreview({ file, onClose }) {
         )}
 
         {file.type.startsWith('video/') && (
-          <video
-            src={file.path}
-            controls
-            className="w-full h-full object-contain"
-          />
+          // Reuses VideoPreview rather than a raw <video src={file.path}> —
+          // file.path is a local filesystem path, not a loadable browser
+          // URL; VideoPreview knows how to turn it into one (or fall back
+          // to the Google Drive embed).
+          <div className="w-full">
+            <VideoPreview file={file} />
+          </div>
         )}
 
         {file.type === 'application/pdf' && (

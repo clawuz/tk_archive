@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 import { resolveThumbnail } from '../../services/thumbnailService';
 import { getFileTypeIcon } from '../../utils/fileIcons';
 
-export default function ThumbnailCard({ file, onSelect, className = '' }) {
+export default function ThumbnailCard({ file, onSelect, className = '', selectable = false, selected = false, onToggleSelect }) {
   const [thumbnail, setThumbnail] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
@@ -55,8 +55,25 @@ export default function ThumbnailCard({ file, onSelect, className = '' }) {
     <div
       ref={imageRef}
       onClick={() => onSelect?.(file)}
-      className={`relative bg-white dark:bg-slate-800 rounded-lg overflow-hidden border border-slate-200 dark:border-slate-700 cursor-pointer transition hover:shadow-lg ${className}`}
+      className={`relative bg-white dark:bg-slate-800 rounded-lg overflow-hidden border cursor-pointer transition hover:shadow-lg ${
+        selected ? 'border-blue-500 ring-2 ring-blue-500' : 'border-slate-200 dark:border-slate-700'
+      } ${className}`}
     >
+      {/* Selection checkbox */}
+      {selectable && (
+        <label
+          onClick={(e) => e.stopPropagation()}
+          className="absolute top-2 left-2 z-10 flex items-center justify-center w-6 h-6 bg-white/90 dark:bg-slate-900/90 rounded shadow"
+        >
+          <input
+            type="checkbox"
+            checked={selected}
+            onChange={() => onToggleSelect?.(file.fileId)}
+            className="rounded border-slate-300 text-blue-600 focus:ring-blue-500 cursor-pointer"
+          />
+        </label>
+      )}
+
       {/* Thumbnail or Fallback */}
       {loading ? (
         // Loading skeleton

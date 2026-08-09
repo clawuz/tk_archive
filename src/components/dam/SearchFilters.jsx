@@ -6,7 +6,20 @@ export default function SearchFilters({ filters, onChange }) {
   const [searchQuery, setSearchQuery] = useState(filters.query || '')
   const [selectedSources, setSelectedSources] = useState(filters.sources || ['local', 'drive'])
   const [selectedTags, setSelectedTags] = useState(filters.tags || [])
-  const [dateRange, setDateRange] = useState(filters.dateRange || null)
+  const [dateFrom, setDateFrom] = useState(
+    filters.dateRange?.from ? new Date(filters.dateRange.from).toISOString().slice(0, 7) : ''
+  )
+  const [dateTo, setDateTo] = useState(
+    filters.dateRange?.to ? new Date(filters.dateRange.to).toISOString().slice(0, 7) : ''
+  )
+  const [selectedLicenseTypes, setSelectedLicenseTypes] = useState(filters.licenseType || [])
+
+  const LICENSE_TYPE_LABELS = {
+    commercial: 'commercial — Ticari Kullanım',
+    RF: 'RF — Royalty-Free (Telifsiz)',
+    RM: 'RM — Rights-Managed (Haklar Yönetilen)',
+    custom: 'custom — Özel Anlaşma',
+  }
 
   // Load available tags
   useEffect(() => {
@@ -47,14 +60,60 @@ export default function SearchFilters({ filters, onChange }) {
     onChange({ sortBy, sortOrder })
   }
 
+  function handleDateFromChange(value) {
+    setDateFrom(value)
+    emitDateRange(value, dateTo)
+  }
+
+  function handleDateToChange(value) {
+    setDateTo(value)
+    emitDateRange(dateFrom, value)
+  }
+
+  function monthStartMillis(yearMonth) {
+    const [year, month] = yearMonth.split('-').map(Number)
+    return new Date(year, month - 1, 1).getTime()
+  }
+
+  function monthEndMillis(yearMonth) {
+    const [year, month] = yearMonth.split('-').map(Number)
+    return new Date(year, month, 0, 23, 59, 59, 999).getTime()
+  }
+
+  function emitDateRange(from, to) {
+    if (!from && !to) {
+      onChange({ dateRange: null })
+      return
+    }
+    onChange({
+      dateRange: {
+        from: from ? monthStartMillis(from) : 0,
+        to: to ? monthEndMillis(to) : Date.now(),
+      },
+    })
+  }
+
+  function handleLicenseTypeToggle(type) {
+    const updated = selectedLicenseTypes.includes(type)
+      ? selectedLicenseTypes.filter((t) => t !== type)
+      : [...selectedLicenseTypes, type]
+    setSelectedLicenseTypes(updated)
+    onChange({ licenseType: updated })
+  }
+
   function handleClearFilters() {
     setSearchQuery('')
     setSelectedSources(['local', 'drive'])
     setSelectedTags([])
+    setDateFrom('')
+    setDateTo('')
+    setSelectedLicenseTypes([])
     onChange({
       query: '',
       sources: ['local', 'drive'],
       tags: [],
+      dateRange: null,
+      licenseType: [],
     })
   }
 
@@ -143,6 +202,52 @@ export default function SearchFilters({ filters, onChange }) {
             </div>
           </div>
         )}
+
+        {/* Date Range Filter (month/year precision — day doesn't matter) */}
+        <div>
+          <label className="block text-sm font-medium text-slate-900 dark:text-white mb-2">
+            📅 Tarih Aralığı (Ay/Yıl)
+          </label>
+          <div className="flex items-center gap-2">
+            <input
+              type="month"
+              value={dateFrom}
+              onChange={(e) => handleDateFromChange(e.target.value)}
+              max={dateTo || undefined}
+              className="w-28 px-2 py-1.5 bg-slate-50 dark:bg-slate-700 border border-slate-300 dark:border-slate-600 rounded-lg text-slate-900 dark:text-white text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+            />
+            <span className="text-slate-400 text-sm">–</span>
+            <input
+              type="month"
+              value={dateTo}
+              onChange={(e) => handleDateToChange(e.target.value)}
+              min={dateFrom || undefined}
+              className="w-28 px-2 py-1.5 bg-slate-50 dark:bg-slate-700 border border-slate-300 dark:border-slate-600 rounded-lg text-slate-900 dark:text-white text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+            />
+          </div>
+        </div>
+
+        {/* License Type Filter */}
+        <div>
+          <label className="block text-sm font-medium text-slate-900 dark:text-white mb-2">
+            📜 Lisans Türü
+          </label>
+          <div className="space-y-2">
+            {['commercial', 'RF', 'RM', 'custom'].map((type) => (
+              <label key={type} className="flex items-center">
+                <input
+                  type="checkbox"
+                  checked={selectedLicenseTypes.includes(type)}
+                  onChange={() => handleLicenseTypeToggle(type)}
+                  className="rounded border-slate-300 text-blue-600 focus:ring-blue-500 cursor-pointer"
+                />
+                <span className="ml-2 text-sm text-slate-700 dark:text-slate-300 cursor-pointer">
+                  {LICENSE_TYPE_LABELS[type]}
+                </span>
+              </label>
+            ))}
+          </div>
+        </div>
 
         {/* Sorting */}
         <div>

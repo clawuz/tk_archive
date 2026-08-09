@@ -122,7 +122,10 @@ async function scanDirectory(dirPath, scanId) {
             tags: extractAutoTags(fullPath, ARCHIVE_ROOT),
             videoPreviewFrames: videoPreviewFrames || null,
             thumbnail: thumbnail || null,
-            needs_tagging: !!videoPreviewFrames,
+            // Flag for the server-side Claude Vision tagging function
+            // (functions/tagNewFiles.js) — anything with a visual preview
+            // (frames or thumbnail) is eligible, not just video.
+            needs_tagging: !!(videoPreviewFrames || thumbnail),
             createdAt: stat.birthtime.getTime(),
             modifiedAt: stat.mtime.getTime(),
             uploadedAt: Date.now(),

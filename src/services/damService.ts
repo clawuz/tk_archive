@@ -14,7 +14,10 @@ import {
   where,
   orderBy,
   limit,
+  startAfter,
   Timestamp,
+  QueryDocumentSnapshot,
+  DocumentData,
 } from 'firebase/firestore'
 import { db } from '../firebase'
 import {
@@ -84,41 +87,55 @@ function enrichFile(file: DAMFile): DAMFileUI {
 // ============================================================================
 
 /**
- * Get all files with filters and pagination
+ * Fetch one page of files matching `filters`, ordered by filters.sortBy.
+ *
+ * Cursor-based (startAfterDoc/batchSize), so it scales to an archive of
+ * thousands of files instead of pulling everything into memory at once.
+ * `tags` is a real Firestore query constraint; `sources`, `query` (text),
+ * `licenseType`, and `dateRange` are post-filtered on each fetched batch
+ * (Firestore can't express substring search or this filter combination
+ * without a composite index per pairing) — so a batch can come back with
+ * fewer matching files than `batchSize`. Callers that need a full page of
+ * *filtered* results should keep fetching batches (using `lastDoc` as the
+ * next cursor) until they have enough or `rawCount < batchSize` (no more
+ * raw documents left).
  */
 export async function searchFiles(
-  filters: DAMSearchFilters
-): Promise<{ files: DAMFileUI[]; total: number }> {
+  filters: DAMSearchFilters,
+  startAfterDoc: QueryDocumentSnapshot<DocumentData> | null = null,
+  batchSize: number = 100
+): Promise<{
+  files: DAMFileUI[]
+  lastDoc: QueryDocumentSnapshot<DocumentData> | null
+  rawCount: number
+}> {
   const queryConstraints = []
-
-  // Build query constraints
-  if (filters.sources && filters.sources.length > 0) {
-    // Query by source - fetch all and filter in app for simplicity
-    // Firestore 'in' with orderBy requires composite index; post-filter instead
-  }
 
   if (filters.tags && filters.tags.length > 0) {
     queryConstraints.push(where('tags', 'array-contains-any', filters.tags))
   }
 
-  if (filters.dateRange) {
-    queryConstraints.push(where('modifiedAt', '>=', filters.dateRange.from))
-    queryConstraints.push(where('modifiedAt', '<=', filters.dateRange.to))
-  }
+  // Note: sources/query/licenseType/dateRange are post-filtered below (not
+  // query constraints) so they combine freely without a composite index for
+  // every field/filter pairing.
 
-  // Add sorting
   const sortField = filters.sortBy || 'modifiedAt'
   const sortDirection = filters.sortOrder === 'asc' ? 'asc' : 'desc'
   queryConstraints.push(orderBy(sortField, sortDirection))
 
-  // Add pagination (limit only for now, use cursor-based pagination later)
-  queryConstraints.push(limit(filters.limit || 600))
+  if (startAfterDoc) {
+    queryConstraints.push(startAfter(startAfterDoc))
+  }
 
-  // Execute query
+  queryConstraints.push(limit(batchSize))
+
   try {
     const snapshot = await getDocs(
       query(collection(db, FILES_COLLECTION), ...queryConstraints)
     )
+    const rawCount = snapshot.docs.length
+    const lastDoc = snapshot.docs[rawCount - 1] || null
+
     let files = snapshot.docs.map((doc) => {
       const data = doc.data() as DAMFile
       // Convert Timestamp objects to milliseconds
@@ -153,9 +170,19 @@ export async function searchFiles(
       )
     }
 
+    if (filters.licenseType && filters.licenseType.length > 0) {
+      files = files.filter((f) => filters.licenseType!.includes(f.license?.type))
+    }
+
+    if (filters.dateRange) {
+      const { from, to } = filters.dateRange
+      files = files.filter((f) => f.modifiedAt >= from && f.modifiedAt <= to)
+    }
+
     return {
       files,
-      total: files.length,
+      lastDoc,
+      rawCount,
     }
   } catch (error) {
     console.error('Error searching files:', error)
@@ -233,6 +260,86 @@ export async function addTagsToFile(fileId: string, tags: string[]): Promise<voi
     }
   } catch (error) {
     console.error('Error adding tags:', error)
+    throw error
+  }
+}
+
+/**
+ * Remove a tag from file
+ */
+export async function removeTagFromFile(fileId: string, tag: string): Promise<void> {
+  try {
+    const file = await getFile(fileId)
+    if (file) {
+      const updated = file.tags.filter((t) => t !== tag)
+      await updateFile(fileId, { tags: updated })
+    }
+  } catch (error) {
+    console.error('Error removing tag:', error)
+    throw error
+  }
+}
+
+/**
+ * Update copyright/license/usage rights on a file.
+ * Restricted to admin/super_admin by Firestore security rules.
+ */
+export async function updateFileRights(
+  fileId: string,
+  rights: {
+    owner?: string
+    licenseType?: string
+    expirationDate?: number | null
+    usageRights?: string
+    productionCompany?: string
+    department?: string
+    contactPerson?: string
+  }
+): Promise<void> {
+  try {
+    const file = await getFile(fileId)
+    if (!file) return
+
+    // `any` because expirationDate may hold a Firestore deleteField() sentinel,
+    // which isn't assignable to the plain `number` type on DAMFile.
+    const updates: any = {}
+
+    if (
+      rights.owner !== undefined ||
+      rights.productionCompany !== undefined ||
+      rights.department !== undefined ||
+      rights.contactPerson !== undefined
+    ) {
+      updates.copyright = {
+        ...file.copyright,
+        ...(rights.owner !== undefined ? { owner: rights.owner } : {}),
+        ...(rights.productionCompany !== undefined ? { productionCompany: rights.productionCompany } : {}),
+        ...(rights.department !== undefined ? { department: rights.department } : {}),
+        ...(rights.contactPerson !== undefined ? { contactPerson: rights.contactPerson } : {}),
+      }
+    }
+
+    if (rights.licenseType !== undefined || rights.expirationDate !== undefined) {
+      // `license` is written as a whole map (the key is "license", not a
+      // "license.expirationDate" path), so clearing the date is just
+      // omitting it here rather than needing a deleteField() sentinel.
+      const { expirationDate: _drop, ...licenseWithoutExpiration } = file.license
+      updates.license = {
+        ...(rights.expirationDate === null ? licenseWithoutExpiration : file.license),
+        ...(rights.licenseType !== undefined ? { type: rights.licenseType as DAMFile['license']['type'] } : {}),
+        ...(rights.expirationDate !== undefined && rights.expirationDate !== null
+          ? { expirationDate: rights.expirationDate }
+          : {}),
+      }
+    }
+
+    if (rights.usageRights !== undefined) {
+      updates.usage = { ...file.usage, usage_rights: rights.usageRights }
+    }
+
+    await updateFile(fileId, updates)
+  } catch (error) {
+    console.error('Error updating file rights:', error)
     throw error
   }
 }
@@ -419,6 +526,8 @@ export default {
   createFile,
   updateFile,
   addTagsToFile,
+  removeTagFromFile,
+  updateFileRights,
   deleteFile,
   getScanHistory,
   getLatestScan,

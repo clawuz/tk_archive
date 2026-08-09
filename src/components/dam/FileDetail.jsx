@@ -1,37 +1,26 @@
-import { useState, memo } from 'react'
+import { useState, useEffect, memo } from 'react'
 import damService from '../../services/damService'
 import * as yoloService from '../../services/yoloService'
 import VideoPreview from './VideoPreview'
 import FileDownload from './FileDownload'
 import FolderBrowser from './FolderBrowser'
+import { useAuth } from '../../auth/AuthProvider'
 
-const VideoFrameGallery = memo(({ frames, loading }) => {
-  if (!frames?.length) return null
+const LICENSE_TYPES = ['commercial', 'RF', 'RM', 'custom']
 
-  return (
-    <div className="mt-6 border-t pt-6 dark:border-slate-700">
-      <h3 className="text-sm font-semibold text-slate-900 dark:text-white mb-4">
-        📹 Video Ön İzleme Kareleri
-      </h3>
-      <div className="grid grid-cols-5 gap-3">
-        {frames.map((frame, idx) => (
-          <div key={idx} className="relative group overflow-hidden rounded-lg bg-slate-100 dark:bg-slate-800 aspect-video">
-            <img
-              src={`data:image/jpeg;base64,${frame.frameData}`}
-              alt={`Frame ${frame.frameNumber}`}
-              className="w-full h-full object-cover"
-            />
-            <div className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center text-white text-xs font-medium">
-              {Math.floor(frame.timestamp)}s
-            </div>
-          </div>
-        ))}
-      </div>
-    </div>
-  )
-})
-
-VideoFrameGallery.displayName = 'VideoFrameGallery'
+function buildRightsForm(file) {
+  return {
+    owner: file.copyright?.owner || '',
+    licenseType: file.license?.type || 'commercial',
+    expirationDate: file.license?.expirationDate
+      ? new Date(file.license.expirationDate).toISOString().slice(0, 10)
+      : '',
+    usageRights: file.usage?.usage_rights || '',
+    productionCompany: file.copyright?.productionCompany || '',
+    department: file.copyright?.department || '',
+    contactPerson: file.copyright?.contactPerson || '',
+  }
+}
 
 const TagDisplay = memo(({ tags, onAutoTag, tagging }) => {
   if (!tags && !onAutoTag) return null
@@ -79,22 +68,42 @@ export default function FileDetail({
   onOpenLightbox,
   onShowPreview,
 }) {
+  const { userProfile } = useAuth()
+  // Only admin/super_admin may add/remove tags or edit copyright & license fields.
+  const canEdit = userProfile?.role === 'admin' || userProfile?.role === 'super_admin'
+
   const [newTag, setNewTag] = useState('')
   const [addingTag, setAddingTag] = useState(false)
   const [files, setFiles] = useState([])
   const [loading, setLoading] = useState(false)
   const [tagging, setTagging] = useState(false)
   const [tagError, setTagError] = useState(null)
+  const [localTags, setLocalTags] = useState(file.tags || [])
+
+  const [editingRights, setEditingRights] = useState(false)
+  const [rightsForm, setRightsForm] = useState(() => buildRightsForm(file))
+  const [savingRights, setSavingRights] = useState(false)
+  const [rightsError, setRightsError] = useState(null)
+  const [selectedFrameIndex, setSelectedFrameIndex] = useState(0)
+
+  // Reset local tags when the selected file changes
+  useEffect(() => {
+    setLocalTags(file.tags || [])
+    setRightsForm(buildRightsForm(file))
+    setSelectedFrameIndex(0)
+    setEditingRights(false)
+    setRightsError(null)
+  }, [file.fileId])
 
   const handleFolderNavigate = async (folderPath) => {
     try {
       setLoading(true)
       // Search for files with path starting with folderPath
-      const result = await damService.searchFiles({
-        sources: ['local'],
-        query: folderPath,
-        limit: 100,
-      })
+      const result = await damService.searchFiles(
+        { sources: ['local'], query: folderPath },
+        null,
+        100
+      )
 
       // Filter to files in this folder and subfolders
       const filesInFolder = result.files.filter(f =>
@@ -111,19 +120,34 @@ export default function FileDetail({
   }
 
   async function handleAddTag() {
-    if (newTag.trim()) {
+    if (!canEdit) return
+    const trimmed = newTag.trim()
+    if (trimmed) {
       try {
-        await damService.addTagsToFile(file.fileId, [newTag.trim()])
+        await damService.addTagsToFile(file.fileId, [trimmed])
+        setLocalTags((prev) => (prev.includes(trimmed) ? prev : [...prev, trimmed]))
         setNewTag('')
         setAddingTag(false)
-        // Refresh file data
       } catch (err) {
         console.error('Etiket eklenemedi:', err)
       }
     }
   }
 
+  async function handleRemoveTag(tag) {
+    if (!canEdit) return
+    const prevTags = localTags
+    setLocalTags((prev) => prev.filter((t) => t !== tag))
+    try {
+      await damService.removeTagFromFile(file.fileId, tag)
+    } catch (err) {
+      console.error('Etiket silinemedi:', err)
+      setLocalTags(prevTags)
+    }
+  }
+
   async function handleAutoTag() {
+    if (!canEdit) return
     try {
       setTagging(true)
       setTagError(null)
@@ -139,9 +163,30 @@ export default function FileDetail({
     }
   }
 
-  const expirationDate = file.license?.expirationDate
-    ? new Date(file.license.expirationDate).toLocaleDateString('tr-TR')
-    : null
+  async function handleSaveRights() {
+    if (!canEdit) return
+    setSavingRights(true)
+    setRightsError(null)
+    try {
+      await damService.updateFileRights(file.fileId, {
+        owner: rightsForm.owner,
+        licenseType: rightsForm.licenseType,
+        expirationDate: rightsForm.expirationDate
+          ? new Date(rightsForm.expirationDate).getTime()
+          : null,
+        usageRights: rightsForm.usageRights,
+        productionCompany: rightsForm.productionCompany,
+        department: rightsForm.department,
+        contactPerson: rightsForm.contactPerson,
+      })
+      setEditingRights(false)
+    } catch (err) {
+      console.error('Telif bilgisi güncellenemedi:', err)
+      setRightsError(err.message || 'Güncelleme başarısız oldu')
+    } finally {
+      setSavingRights(false)
+    }
+  }
 
   return (
     <div className="bg-white dark:bg-slate-800 rounded-lg border border-slate-200 dark:border-slate-700 overflow-hidden flex flex-col h-full">
@@ -160,34 +205,63 @@ export default function FileDetail({
 
       {/* Content */}
       <div className="flex-1 overflow-y-auto p-4 space-y-6">
-        {/* Preview Thumbnail */}
-        <div
-          className="relative w-full aspect-video bg-gradient-to-br from-slate-100 to-slate-200 dark:from-slate-700 dark:to-slate-600 rounded-lg overflow-hidden cursor-pointer hover:opacity-75 transition group"
-          onClick={onOpenLightbox}
-        >
-          <img
-            src={file.thumbnailUrl}
-            alt={file.name}
-            className="w-full h-full object-cover"
-          />
-          <div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition bg-black/20">
-            <svg
-              className="w-8 h-8 text-white"
-              fill="currentColor"
-              viewBox="0 0 20 20"
-            >
-              <path d="M10 12a2 2 0 100-4 2 2 0 000 4z" />
-            </svg>
+        {/* Preview Thumbnail — for videos, the selected frame; a filmstrip of
+            all 5 extracted frames sits underneath, each clickable */}
+        <div>
+          <div
+            className="relative w-full aspect-video bg-gradient-to-br from-slate-100 to-slate-200 dark:from-slate-700 dark:to-slate-600 rounded-lg overflow-hidden cursor-pointer hover:opacity-75 transition group"
+            onClick={onOpenLightbox}
+          >
+            <img
+              src={
+                file.videoPreviewFrames?.length > 0
+                  ? `data:image/jpeg;base64,${file.videoPreviewFrames[selectedFrameIndex]?.frameData}`
+                  : file.thumbnailUrl
+              }
+              alt={file.name}
+              className="w-full h-full object-cover"
+            />
+            <div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition bg-black/20">
+              <svg
+                className="w-8 h-8 text-white"
+                fill="currentColor"
+                viewBox="0 0 20 20"
+              >
+                <path d="M10 12a2 2 0 100-4 2 2 0 000 4z" />
+              </svg>
+            </div>
           </div>
+
+          {file.videoPreviewFrames?.length > 0 && (
+            <div className="grid grid-cols-5 gap-2 mt-2">
+              {file.videoPreviewFrames.map((frame, idx) => (
+                <button
+                  key={idx}
+                  type="button"
+                  onClick={() => setSelectedFrameIndex(idx)}
+                  title={`${Math.floor(frame.timestamp)}s`}
+                  className={`relative aspect-video rounded overflow-hidden border-2 transition ${
+                    idx === selectedFrameIndex
+                      ? 'border-blue-500'
+                      : 'border-transparent hover:border-slate-300 dark:hover:border-slate-600'
+                  }`}
+                >
+                  <img
+                    src={`data:image/jpeg;base64,${frame.frameData}`}
+                    alt={`Kare ${frame.frameNumber}`}
+                    className="w-full h-full object-cover"
+                  />
+                  <span className="absolute bottom-0.5 right-0.5 text-[10px] leading-none px-1 py-0.5 bg-black/60 text-white rounded">
+                    {Math.floor(frame.timestamp)}s
+                  </span>
+                </button>
+              ))}
+            </div>
+          )}
         </div>
 
         {/* Video Preview Player */}
         <VideoPreview file={file} />
-
-        {/* Video Frame Gallery */}
-        {file.videoPreviewFrames && file.videoPreviewFrames.length > 0 && (
-          <VideoFrameGallery frames={file.videoPreviewFrames} />
-        )}
 
         {/* Folder Navigation Breadcrumb */}
         <FolderBrowser file={file} onNavigate={handleFolderNavigate} />
@@ -234,44 +308,207 @@ export default function FileDetail({
         {/* Rights & License */}
         {file.copyright && (
           <div>
-            <h4 className="font-semibold text-slate-900 dark:text-white mb-3">
-              ⚖️ Telif & Lisans
-            </h4>
-            <div className="space-y-2 text-sm">
-              <div className="flex justify-between">
-                <span className="text-slate-600 dark:text-slate-400">Sahip:</span>
-                <span className="text-slate-900 dark:text-white font-medium">
-                  {file.copyright.owner}
-                </span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-slate-600 dark:text-slate-400">Lisans:</span>
-                <span
-                  className={`font-medium px-2 py-1 rounded text-xs ${
-                    file.license?.type === 'RF'
-                      ? 'bg-green-100 text-green-800'
-                      : 'bg-blue-100 text-blue-800'
-                  }`}
+            <div className="flex items-center justify-between mb-3">
+              <h4 className="font-semibold text-slate-900 dark:text-white">
+                ⚖️ Telif & Lisans
+              </h4>
+              {canEdit && !editingRights && (
+                <button
+                  onClick={() => setEditingRights(true)}
+                  className="text-xs text-blue-600 dark:text-blue-400 hover:underline"
                 >
-                  {file.license?.type}
-                </span>
-              </div>
-              {expirationDate && (
-                <div className="flex justify-between">
-                  <span className="text-slate-600 dark:text-slate-400">
-                    Süresi:
-                  </span>
-                  <span
-                    className={`font-medium ${
-                      file.isExpired ? 'text-red-600' : 'text-slate-900 dark:text-white'
-                    }`}
-                  >
-                    {expirationDate}
-                    {file.isExpired && ' ⚠️'}
-                  </span>
-                </div>
+                  ✏️ Düzenle
+                </button>
               )}
             </div>
+
+            {!editingRights ? (
+              <div className="space-y-2 text-sm">
+                <div className="flex justify-between">
+                  <span className="text-slate-600 dark:text-slate-400">Sahip:</span>
+                  <span className="text-slate-900 dark:text-white font-medium">
+                    {rightsForm.owner || '—'}
+                  </span>
+                </div>
+                {rightsForm.productionCompany && (
+                  <div className="flex justify-between">
+                    <span className="text-slate-600 dark:text-slate-400">Prodüksiyon Şirketi:</span>
+                    <span className="text-slate-900 dark:text-white font-medium">
+                      {rightsForm.productionCompany}
+                    </span>
+                  </div>
+                )}
+                {rightsForm.department && (
+                  <div className="flex justify-between">
+                    <span className="text-slate-600 dark:text-slate-400">İlgili Birim:</span>
+                    <span className="text-slate-900 dark:text-white font-medium">
+                      {rightsForm.department}
+                    </span>
+                  </div>
+                )}
+                {rightsForm.contactPerson && (
+                  <div className="flex justify-between">
+                    <span className="text-slate-600 dark:text-slate-400">İlgili Kişi:</span>
+                    <span className="text-slate-900 dark:text-white font-medium">
+                      {rightsForm.contactPerson}
+                    </span>
+                  </div>
+                )}
+                <div className="flex justify-between">
+                  <span className="text-slate-600 dark:text-slate-400">Lisans:</span>
+                  <span
+                    className={`font-medium px-2 py-1 rounded text-xs ${
+                      rightsForm.licenseType === 'RF'
+                        ? 'bg-green-100 text-green-800'
+                        : 'bg-blue-100 text-blue-800'
+                    }`}
+                  >
+                    {rightsForm.licenseType}
+                  </span>
+                </div>
+                {rightsForm.expirationDate && (
+                  <div className="flex justify-between">
+                    <span className="text-slate-600 dark:text-slate-400">
+                      Süresi:
+                    </span>
+                    <span
+                      className={`font-medium ${
+                        new Date(rightsForm.expirationDate).getTime() < Date.now()
+                          ? 'text-red-600'
+                          : 'text-slate-900 dark:text-white'
+                      }`}
+                    >
+                      {new Date(rightsForm.expirationDate).toLocaleDateString('tr-TR')}
+                      {new Date(rightsForm.expirationDate).getTime() < Date.now() && ' ⚠️'}
+                    </span>
+                  </div>
+                )}
+                {rightsForm.usageRights && (
+                  <div>
+                    <span className="text-slate-600 dark:text-slate-400 block mb-1">
+                      Kullanım Hakları:
+                    </span>
+                    <p className="text-slate-900 dark:text-white text-sm whitespace-pre-wrap">
+                      {rightsForm.usageRights}
+                    </p>
+                  </div>
+                )}
+              </div>
+            ) : (
+              <div className="space-y-3">
+                <div>
+                  <label className="text-xs text-slate-600 dark:text-slate-400 block mb-1">
+                    Sahip
+                  </label>
+                  <input
+                    type="text"
+                    value={rightsForm.owner}
+                    onChange={(e) => setRightsForm({ ...rightsForm, owner: e.target.value })}
+                    className="w-full px-2 py-1 text-sm bg-slate-50 dark:bg-slate-700 border border-slate-300 dark:border-slate-600 rounded"
+                  />
+                </div>
+                <div>
+                  <label className="text-xs text-slate-600 dark:text-slate-400 block mb-1">
+                    Prodüksiyon Şirketi (varsa)
+                  </label>
+                  <input
+                    type="text"
+                    value={rightsForm.productionCompany}
+                    onChange={(e) => setRightsForm({ ...rightsForm, productionCompany: e.target.value })}
+                    placeholder="Örn. XYZ Prodüksiyon"
+                    className="w-full px-2 py-1 text-sm bg-slate-50 dark:bg-slate-700 border border-slate-300 dark:border-slate-600 rounded"
+                  />
+                </div>
+                <div>
+                  <label className="text-xs text-slate-600 dark:text-slate-400 block mb-1">
+                    İlgili Birim
+                  </label>
+                  <input
+                    type="text"
+                    value={rightsForm.department}
+                    onChange={(e) => setRightsForm({ ...rightsForm, department: e.target.value })}
+                    placeholder="Örn. Kurumsal İletişim"
+                    className="w-full px-2 py-1 text-sm bg-slate-50 dark:bg-slate-700 border border-slate-300 dark:border-slate-600 rounded"
+                  />
+                </div>
+                <div>
+                  <label className="text-xs text-slate-600 dark:text-slate-400 block mb-1">
+                    İlgili Kişi
+                  </label>
+                  <input
+                    type="text"
+                    value={rightsForm.contactPerson}
+                    onChange={(e) => setRightsForm({ ...rightsForm, contactPerson: e.target.value })}
+                    placeholder="Örn. Ad Soyad"
+                    className="w-full px-2 py-1 text-sm bg-slate-50 dark:bg-slate-700 border border-slate-300 dark:border-slate-600 rounded"
+                  />
+                </div>
+                <div>
+                  <label className="text-xs text-slate-600 dark:text-slate-400 block mb-1">
+                    Lisans Tipi
+                  </label>
+                  <select
+                    value={rightsForm.licenseType}
+                    onChange={(e) => setRightsForm({ ...rightsForm, licenseType: e.target.value })}
+                    className="w-full px-2 py-1 text-sm bg-slate-50 dark:bg-slate-700 border border-slate-300 dark:border-slate-600 rounded"
+                  >
+                    {LICENSE_TYPES.map((lt) => (
+                      <option key={lt} value={lt}>{lt}</option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className="text-xs text-slate-600 dark:text-slate-400 block mb-1">
+                    Son Kullanma Tarihi
+                  </label>
+                  <input
+                    type="date"
+                    value={rightsForm.expirationDate}
+                    onChange={(e) => setRightsForm({ ...rightsForm, expirationDate: e.target.value })}
+                    className="w-full px-2 py-1 text-sm bg-slate-50 dark:bg-slate-700 border border-slate-300 dark:border-slate-600 rounded"
+                  />
+                </div>
+                <div>
+                  <label className="text-xs text-slate-600 dark:text-slate-400 block mb-1">
+                    Kullanım Hakları / Kısıtlamalar
+                  </label>
+                  <textarea
+                    value={rightsForm.usageRights}
+                    onChange={(e) => setRightsForm({ ...rightsForm, usageRights: e.target.value })}
+                    rows={3}
+                    placeholder="Örn. sadece sosyal medya, Nisan 2026'ya kadar geçerli..."
+                    className="w-full px-2 py-1 text-sm bg-slate-50 dark:bg-slate-700 border border-slate-300 dark:border-slate-600 rounded"
+                  />
+                </div>
+
+                {rightsError && (
+                  <div className="p-2 bg-red-50 dark:bg-red-900/30 border border-red-200 dark:border-red-800 rounded text-xs text-red-700 dark:text-red-300">
+                    {rightsError}
+                  </div>
+                )}
+
+                <div className="flex gap-2">
+                  <button
+                    onClick={handleSaveRights}
+                    disabled={savingRights}
+                    className="px-3 py-1 text-xs bg-blue-500 text-white rounded hover:bg-blue-600 disabled:opacity-50"
+                  >
+                    {savingRights ? 'Kaydediliyor...' : 'Kaydet'}
+                  </button>
+                  <button
+                    onClick={() => {
+                      setRightsForm(buildRightsForm(file))
+                      setEditingRights(false)
+                      setRightsError(null)
+                    }}
+                    disabled={savingRights}
+                    className="px-3 py-1 text-xs bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-200 rounded hover:bg-slate-300 dark:hover:bg-slate-600"
+                  >
+                    İptal
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
         )}
 
@@ -281,12 +518,22 @@ export default function FileDetail({
             🏷️ Etiketler
           </h4>
           <div className="flex flex-wrap gap-2 mb-3">
-            {file.tags?.map((tag) => (
+            {localTags.map((tag) => (
               <span
                 key={tag}
-                className="inline-block px-3 py-1 bg-blue-100 dark:bg-blue-900 text-blue-800 dark:text-blue-200 rounded-full text-xs font-medium"
+                className="inline-flex items-center gap-1 px-3 py-1 bg-blue-100 dark:bg-blue-900 text-blue-800 dark:text-blue-200 rounded-full text-xs font-medium"
               >
                 {tag}
+                {canEdit && (
+                  <button
+                    onClick={() => handleRemoveTag(tag)}
+                    className="hover:text-red-600 dark:hover:text-red-400"
+                    aria-label={`${tag} etiketini kaldır`}
+                    title="Etiketi kaldır"
+                  >
+                    ✕
+                  </button>
+                )}
               </span>
             ))}
           </div>
@@ -298,49 +545,51 @@ export default function FileDetail({
             </div>
           )}
 
-          {/* Tag action buttons */}
-          <div className="flex gap-2 flex-wrap">
-            {!addingTag ? (
-              <>
-                <button
-                  onClick={() => setAddingTag(true)}
-                  className="text-xs text-blue-600 dark:text-blue-400 hover:underline"
-                >
-                  + Etiket Ekle
-                </button>
-                {(file.type?.startsWith('video/') || file.type?.startsWith('image/')) && (
+          {/* Tag action buttons — add/remove/auto-tag restricted to admin/super_admin */}
+          {canEdit && (
+            <div className="flex gap-2 flex-wrap">
+              {!addingTag ? (
+                <>
                   <button
-                    onClick={handleAutoTag}
-                    disabled={tagging}
-                    className="text-xs px-2 py-1 bg-purple-100 dark:bg-purple-900 text-purple-700 dark:text-purple-300 rounded hover:bg-purple-200 dark:hover:bg-purple-800 disabled:opacity-50 disabled:cursor-not-allowed transition"
+                    onClick={() => setAddingTag(true)}
+                    className="text-xs text-blue-600 dark:text-blue-400 hover:underline"
                   >
-                    {tagging ? '✨ Etiketleniyor...' : '✨ Otomatik Etiketle'}
+                    + Etiket Ekle
                   </button>
-                )}
-              </>
-            ) : (
-              <div className="flex gap-2 w-full">
-                <input
-                  type="text"
-                  value={newTag}
-                  onChange={(e) => setNewTag(e.target.value)}
-                  placeholder="Yeni etiket..."
-                  className="flex-1 px-2 py-1 text-xs bg-slate-50 dark:bg-slate-700 border border-slate-300 dark:border-slate-600 rounded"
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter') handleAddTag()
-                    if (e.key === 'Escape') setAddingTag(false)
-                  }}
-                  autoFocus
-                />
-                <button
-                  onClick={handleAddTag}
-                  className="px-2 py-1 text-xs bg-blue-500 text-white rounded hover:bg-blue-600"
-                >
-                  Ekle
-                </button>
-              </div>
-            )}
-          </div>
+                  {(file.type?.startsWith('video/') || file.type?.startsWith('image/')) && (
+                    <button
+                      onClick={handleAutoTag}
+                      disabled={tagging}
+                      className="text-xs px-2 py-1 bg-purple-100 dark:bg-purple-900 text-purple-700 dark:text-purple-300 rounded hover:bg-purple-200 dark:hover:bg-purple-800 disabled:opacity-50 disabled:cursor-not-allowed transition"
+                    >
+                      {tagging ? '✨ Etiketleniyor...' : '✨ Otomatik Etiketle'}
+                    </button>
+                  )}
+                </>
+              ) : (
+                <div className="flex gap-2 w-full">
+                  <input
+                    type="text"
+                    value={newTag}
+                    onChange={(e) => setNewTag(e.target.value)}
+                    placeholder="Yeni etiket..."
+                    className="flex-1 px-2 py-1 text-xs bg-slate-50 dark:bg-slate-700 border border-slate-300 dark:border-slate-600 rounded"
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') handleAddTag()
+                      if (e.key === 'Escape') setAddingTag(false)
+                    }}
+                    autoFocus
+                  />
+                  <button
+                    onClick={handleAddTag}
+                    className="px-2 py-1 text-xs bg-blue-500 text-white rounded hover:bg-blue-600"
+                  >
+                    Ekle
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
         </div>
 
         {/* Usage Stats */}

@@ -7,12 +7,17 @@
  * only exposes them.
  *
  * Deployed functions:
- *   startScan           callable  — user starts a scan from the dashboard
- *   getScanStatus       callable  — dashboard polls progress
- *   scanResults         callable  — dashboard downloads results
- *   startScanScheduled  https     — Cloud Scheduler starts the weekly scan
+ *   startScan           callable   — user starts a scan from the dashboard
+ *   getScanStatus       callable   — dashboard polls progress
+ *   scanResults         callable   — dashboard downloads results
+ *   startScanScheduled  https      — Cloud Scheduler starts the weekly scan
+ *   tagNewFiles         callable   — manual/batch Claude Vision tagging (dashboard button, backfills)
+ *   onFileNeedsTagging  firestore  — automatic Claude Vision tagging; fires on every
+ *                                    files/{fileId} write with needs_tagging: true, so
+ *                                    newly scanned folders/files get tagged with no
+ *                                    manual step
  *
- * The three callables require Firebase Auth. `startScanScheduled` requires a
+ * The callables require Firebase Auth. `startScanScheduled` requires a
  * service account OIDC token instead; see the comment at the top of
  * startScanScheduled.js for why it cannot be the same function as startScan.
  */
@@ -29,7 +34,7 @@ const { getScanStatus } = require('./getScanStatus');
 const { scanResults } = require('./scanResults');
 const { startScanScheduled } = require('./startScanScheduled');
 const { download } = require('./download');
-const { tagNewFiles } = require('./tagNewFiles');
+const { tagNewFiles, onFileNeedsTagging } = require('./tagNewFiles');
 
 module.exports = {
   startScan,
@@ -38,4 +43,5 @@ module.exports = {
   startScanScheduled,
   download,
   tagNewFiles,
+  onFileNeedsTagging,
 };

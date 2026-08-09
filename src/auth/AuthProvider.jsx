@@ -18,8 +18,11 @@ export function AuthProvider({ children }) {
   const [domainError, setDomainError] = useState(false)
 
   useEffect(() => {
-    // Test mode: allow access without login
-    setUserProfile({ role: 'viewer', department: null })
+    // TEST MODE: allow access without login. Role is hardcoded to 'admin' so
+    // permission-gated features (e.g. copyright editing) can be exercised
+    // during development. Must be replaced by real Firebase Auth + Firestore
+    // user roles before production — see ArchiveLoginPage / LoginPage.
+    setUserProfile({ role: 'admin', department: null })
     setUser({ uid: 'test-user', email: 'test@tribalistanbul.com' })
     setLoading(false)
   }, [])

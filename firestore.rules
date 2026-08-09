@@ -75,9 +75,14 @@ service cloud.firestore {
     // ========================================================================
 
     // Files collection — DAM file metadata
-    // TEST MODE: public read access for verification
+    // TEST MODE: public read access (no login screen yet). Write is real
+    // security: only an authenticated admin/super_admin may add/remove tags
+    // or edit copyright/license fields. Everyone else — including the
+    // unauthenticated test-mode client — is rejected server-side, regardless
+    // of what the client's local (fake) role state claims.
     match /files/{fileId} {
-      allow read, write: if true;
+      allow read: if true;
+      allow write: if isAuthenticated() && isAllowedDomain() && (hasRole('admin') || hasRole('super_admin'));
     }
 
     // Changes collection — incremental file changes

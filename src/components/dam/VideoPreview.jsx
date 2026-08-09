@@ -57,6 +57,7 @@ export default function VideoPreview({ file }) {
           controls
           className="w-full h-96 bg-black"
           controlsList="nodownload"
+          onError={() => setError('Video oynatılamadı. Dosya bozuk olabilir veya tarayıcı bu codec\'i desteklemiyor olabilir.')}
         />
       )}
 
