@@ -8,3 +8,5 @@ dist/
 .idea/
 *.swp
 *.swo
+functions/config/
+*serviceAccountKey*.json
