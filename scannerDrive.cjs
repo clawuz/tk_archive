@@ -9,6 +9,7 @@ const fs = require('fs');
 const path = require('path');
 const { google } = require('googleapis');
 const admin = require('firebase-admin');
+const { extractAutoTags } = require('./lib/autoTags.cjs');
 
 console.log('📦 Loading firebase-admin...');
 const serviceAccount = JSON.parse(
@@ -126,7 +127,7 @@ async function scanDriveFolder(drive, folderId, scanId) {
           type: file.mimeType,
           size: parseInt(file.size) || 0,
           hash: `drive:${file.id}`, // Google Drive IDs as hash
-          tags: [],
+          tags: extractAutoTags([DRIVE_FOLDER_NAME, file.name]),
           createdAt: new Date(file.createdTime).getTime(),
           modifiedAt: new Date(file.modifiedTime).getTime(),
           uploadedAt: Date.now(),
