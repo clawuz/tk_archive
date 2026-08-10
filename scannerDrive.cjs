@@ -10,7 +10,6 @@ const path = require('path');
 const { google } = require('googleapis');
 const admin = require('firebase-admin');
 const { extractAutoTags } = require('./lib/autoTags.cjs');
-const { extractVideoFrames } = require('./lib/videoFrames.cjs');
 
 console.log('📦 Loading firebase-admin...');
 const serviceAccount = JSON.parse(
@@ -24,39 +23,15 @@ admin.initializeApp({
 
 const db = admin.firestore();
 
-// Drive-sourced videos still play directly from Google's own embeddable
-// viewer (https://drive.google.com/file/d/{id}/preview — see
-// streamingService.ts), never re-uploaded to our own Cloud Storage: no
-// duplicate storage, and Drive already serves playback reliably. But
-// Claude Vision tagging needs more than Drive's single auto-generated
-// thumbnail to judge a video accurately (see the mistagged corporate
-// films this fixed), so each video is downloaded briefly to /tmp, run
-// through the same 5-frame ffmpeg extraction scanner.cjs uses for local
-// videos, then deleted immediately — only the 5 small JPEG frames persist
-// (in Firestore, same as local videos), never the video bytes themselves.
-const VIDEO_MIME_TYPES = new Set(['video/mp4', 'video/quicktime', 'video/x-matroska', 'video/webm']);
-
-async function extractDriveVideoFrames(drive, driveFileId, ext, scanId) {
-  const tempPath = `/tmp/drive-video-${driveFileId}.${ext.toLowerCase()}`;
-  try {
-    const res = await drive.files.get(
-      { fileId: driveFileId, alt: 'media' },
-      { responseType: 'stream' }
-    );
-    await new Promise((resolve, reject) => {
-      res.data
-        .pipe(fs.createWriteStream(tempPath))
-        .on('error', reject)
-        .on('finish', resolve);
-    });
-    return await extractVideoFrames(tempPath, scanId);
-  } catch (err) {
-    console.error(`⚠️  Frame extraction failed for ${driveFileId}:`, err.message);
-    return null;
-  } finally {
-    fs.rmSync(tempPath, { force: true });
-  }
-}
+// Drive-sourced videos play directly from Google's own embeddable viewer
+// (https://drive.google.com/file/d/{id}/preview — see streamingService.ts),
+// and are NEVER downloaded by this scanner — not even briefly for frame
+// extraction. A real archive is too large for that to be a one-time cost:
+// every scan would re-download every video's full bytes just to re-scan a
+// folder for a few new files. Claude Vision tagging works from Drive's
+// single auto-generated thumbnail instead (functions/tagNewFiles.js),
+// backed by the folder/filename auto-tags below and a taxonomy prompt that
+// knows a single frame is limited evidence.
 
 // Configuration — a real folder ID is required (not 'root'/My Drive): a
 // service account has no personal Drive of its own, so it can only see
@@ -146,14 +121,6 @@ async function scanDriveFolder(drive, folderId, scanId) {
         const resolvedMimeType = await getMimeType(file.mimeType);
         const extension = file.name.split('.').pop() || '';
 
-        let videoPreviewFrames = null;
-        if (VIDEO_MIME_TYPES.has(resolvedMimeType) && extension) {
-          console.log(`\n  🎬 Extracting frames: ${file.name}`);
-          videoPreviewFrames = await extractDriveVideoFrames(drive, file.id, extension, scanId);
-          if (videoPreviewFrames) {
-            console.log(`  ✅ Extracted ${videoPreviewFrames.length} frames`);
-          }
-        }
 
         const fileDoc = {
           fileId: file.id,
@@ -178,10 +145,14 @@ async function scanDriveFolder(drive, folderId, scanId) {
             generated: false,
             generatedAt: Date.now()
           } : null,
-          videoPreviewFrames: videoPreviewFrames || null,
+          // This scanner never produces frames itself (no video download —
+          // see the comment near VIDEO scanning above); the batch curation
+          // preserve step below carries forward videoPreviewFrames from an
+          // existing doc if an earlier one-off pass put any there.
+          videoPreviewFrames: null,
           // Flag for the server-side Claude Vision tagging function
           // (functions/tagNewFiles.js) — same as scanner.cjs's local files.
-          needs_tagging: !!(videoPreviewFrames || file.thumbnailLink),
+          needs_tagging: !!file.thumbnailLink,
           copyright: {
             owner: 'TK',
             year: new Date().getFullYear()
@@ -246,6 +217,9 @@ async function run() {
     const PRESERVE_FIELDS = [
       'tags', 'needs_tagging', 'tagSource', 'taggedAt',
       'description', 'descriptionSource', 'copyright', 'license', 'usage',
+      // Carries forward frames from an earlier one-off pass, if any exist —
+      // this scanner itself never downloads a video to produce them.
+      'videoPreviewFrames',
     ];
     const existingByFileId = new Map();
     const CHUNK_SIZE = 300;

@@ -8,7 +8,7 @@ const VIEW_MODE_KEY = 'tk-archive-view-mode'
 
 export default function FileGallery({
   files, // current page only
-  loadedFiles = [], // everything fetched so far across visited pages — for the stat cards
+  fileCounts = { total: 0, local: 0, drive: 0 }, // archive-wide totals, independent of pagination/filters
   onFileSelect,
   loading,
   onRefresh,
@@ -83,25 +83,21 @@ export default function FileGallery({
     }
   }
 
-  const loadedLocal = loadedFiles.filter((f) => f.source === 'local').length
-  const loadedDrive = loadedFiles.filter((f) => f.source === 'drive').length
-
   return (
     <div className="space-y-6">
-      {/* Stats — reflect everything loaded so far (grows as pages are visited), not a full-archive total */}
+      {/* Stats — true archive-wide totals (Firestore count aggregate), independent of filters/pagination */}
       <div className="grid grid-cols-3 gap-4">
         <div className="bg-white dark:bg-slate-800 rounded-lg p-4 border border-slate-200 dark:border-slate-700">
           <div className="text-2xl font-bold text-slate-900 dark:text-white">
-            {loadedFiles.length}
-            {hasNextPage && '+'}
+            {fileCounts.total}
           </div>
           <div className="text-sm text-slate-600 dark:text-slate-400 mt-1">
-            Yüklenen Dosya
+            Toplam Dosya
           </div>
         </div>
         <div className="bg-white dark:bg-slate-800 rounded-lg p-4 border border-slate-200 dark:border-slate-700">
           <div className="text-2xl font-bold text-slate-900 dark:text-white">
-            {loadedLocal}
+            {fileCounts.local}
           </div>
           <div className="text-sm text-slate-600 dark:text-slate-400 mt-1">
             Yerel
@@ -109,7 +105,7 @@ export default function FileGallery({
         </div>
         <div className="bg-white dark:bg-slate-800 rounded-lg p-4 border border-slate-200 dark:border-slate-700">
           <div className="text-2xl font-bold text-slate-900 dark:text-white">
-            {loadedDrive}
+            {fileCounts.drive}
           </div>
           <div className="text-sm text-slate-600 dark:text-slate-400 mt-1">
             Drive

@@ -32,6 +32,8 @@ export default function DAMDashboard() {
   const [loading, setLoading] = useState(false)
   const [pageLoading, setPageLoading] = useState(false)
   const [error, setError] = useState(null)
+  // Archive-wide totals — independent of pagination/filters, see loadFileCounts.
+  const [fileCounts, setFileCounts] = useState({ total: 0, local: 0, drive: 0 })
   const cursorRef = useRef(null)
   const rawExhaustedRef = useRef(false)
   const [filters, setFilters] = useState({
@@ -69,6 +71,21 @@ export default function DAMDashboard() {
   useEffect(() => {
     loadScanHistory()
   }, [])
+
+  // Archive-wide totals, independent of filters/pagination — loaded once,
+  // then refreshed whenever a scan finishes (new files may have appeared).
+  useEffect(() => {
+    loadFileCounts()
+  }, [])
+
+  async function loadFileCounts() {
+    try {
+      const counts = await damService.getFileCounts()
+      setFileCounts(counts)
+    } catch (err) {
+      console.error('Dosya sayıları alınamadı:', err)
+    }
+  }
 
   // Fetches raw batches from Firestore (via damService.searchFiles) — each
   // batch is filtered client-side before being appended — until `buffer` has
@@ -181,6 +198,7 @@ export default function DAMDashboard() {
               setScanHistory(history)
               setCurrentScan(history[0] || null)
               await loadFiles()
+              await loadFileCounts()
             } else {
               setScanError('Scan failed: ' + statusResult.data.error)
             }
@@ -273,7 +291,7 @@ export default function DAMDashboard() {
           {!loading && loadedFiles.length > 0 && (
             <FileGallery
               files={pageFiles}
-              loadedFiles={loadedFiles}
+              fileCounts={fileCounts}
               onFileSelect={handleFileSelect}
               loading={loading}
               onRefresh={loadFiles}

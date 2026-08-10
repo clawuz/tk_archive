@@ -15,6 +15,7 @@ import {
   orderBy,
   limit,
   startAfter,
+  getCountFromServer,
   Timestamp,
   QueryDocumentSnapshot,
   DocumentData,
@@ -187,6 +188,27 @@ export async function searchFiles(
   } catch (error) {
     console.error('Error searching files:', error)
     throw error
+  }
+}
+
+/**
+ * True archive-wide file counts (total/local/drive) — independent of
+ * pagination and of any active filter. Uses Firestore's count aggregate
+ * (getCountFromServer), which counts matching documents server-side
+ * without downloading them, so this stays cheap even as the archive grows
+ * into the thousands.
+ */
+export async function getFileCounts(): Promise<{ total: number; local: number; drive: number }> {
+  const filesRef = collection(db, FILES_COLLECTION)
+  const [totalSnap, localSnap, driveSnap] = await Promise.all([
+    getCountFromServer(filesRef),
+    getCountFromServer(query(filesRef, where('source', '==', 'local'))),
+    getCountFromServer(query(filesRef, where('source', '==', 'drive'))),
+  ])
+  return {
+    total: totalSnap.data().count,
+    local: localSnap.data().count,
+    drive: driveSnap.data().count,
   }
 }
 
@@ -522,6 +544,7 @@ export async function createTag(tag: Omit<DAMTag, 'tagId'>): Promise<string> {
 
 export default {
   searchFiles,
+  getFileCounts,
   getFile,
   createFile,
   updateFile,
