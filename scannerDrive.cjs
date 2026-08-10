@@ -139,6 +139,9 @@ async function scanDriveFolder(drive, folderId, scanId) {
             generated: false,
             generatedAt: Date.now()
           } : null,
+          // Flag for the server-side Claude Vision tagging function
+          // (functions/tagNewFiles.js) — same as scanner.cjs's local files.
+          needs_tagging: !!file.thumbnailLink,
           copyright: {
             owner: 'TK',
             year: new Date().getFullYear()
@@ -194,6 +197,34 @@ async function run() {
     console.log(`🔍 Scanning Google Drive...`);
     const files = await scanDriveFolder(drive, DRIVE_FOLDER_ID, scanId);
     console.log(`\n📁 Found ${files.length} files\n`);
+
+    // Preserve curation from previous scans — same reasoning as
+    // scanner.cjs: batch.set(fileRef, file) below is a full overwrite per
+    // file, so without this a re-scan would wipe tags/copyright edits and
+    // re-flag needs_tagging, re-billing Claude Vision on every re-scan.
+    console.log(`🔎 Checking for existing curation to preserve...`);
+    const PRESERVE_FIELDS = [
+      'tags', 'needs_tagging', 'tagSource', 'taggedAt',
+      'description', 'descriptionSource', 'copyright', 'license', 'usage',
+    ];
+    const existingByFileId = new Map();
+    const CHUNK_SIZE = 300;
+    for (let i = 0; i < files.length; i += CHUNK_SIZE) {
+      const chunk = files.slice(i, i + CHUNK_SIZE);
+      const refs = chunk.map((f) => db.collection('files').doc(f.fileId));
+      const snaps = await db.getAll(...refs);
+      for (const snap of snaps) {
+        if (snap.exists) existingByFileId.set(snap.id, snap.data());
+      }
+    }
+    for (const file of files) {
+      const existing = existingByFileId.get(file.fileId);
+      if (!existing) continue;
+      for (const field of PRESERVE_FIELDS) {
+        if (existing[field] !== undefined) file[field] = existing[field];
+      }
+    }
+    console.log(`  Preserved curation on ${existingByFileId.size} already-scanned files\n`);
 
     // Write files to Firestore (batch)
     if (files.length > 0) {

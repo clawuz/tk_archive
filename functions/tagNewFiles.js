@@ -95,11 +95,22 @@ function extractBase64FromDataUrl(dataUrl) {
   return { mediaType: match[1], data: match[2] };
 }
 
+// Drive files store thumbnail.url as a real https:// link (Drive's own
+// thumbnailLink), not a data: URI like local files — fetch and inline it so
+// buildImageBlocks can treat both sources the same way.
+async function fetchAsBase64Image(url) {
+  const res = await fetch(url);
+  if (!res.ok) return null;
+  const mediaType = (res.headers.get('content-type') || 'image/jpeg').split(';')[0];
+  const buffer = Buffer.from(await res.arrayBuffer());
+  return { mediaType, data: buffer.toString('base64') };
+}
+
 /**
  * Builds the image content blocks for a file: video frames if present,
  * otherwise the stored thumbnail, otherwise null (nothing to tag visually).
  */
-function buildImageBlocks(file) {
+async function buildImageBlocks(file) {
   if (file.videoPreviewFrames?.length > 0) {
     return file.videoPreviewFrames.slice(0, 5).map((frame) => ({
       type: 'image',
@@ -108,7 +119,10 @@ function buildImageBlocks(file) {
   }
 
   if (file.thumbnail?.url) {
-    const parsed = extractBase64FromDataUrl(file.thumbnail.url);
+    const dataUrlParsed = extractBase64FromDataUrl(file.thumbnail.url);
+    const parsed = dataUrlParsed || (
+      file.thumbnail.url.startsWith('https://') ? await fetchAsBase64Image(file.thumbnail.url) : null
+    );
     if (parsed) {
       return [{
         type: 'image',
@@ -122,7 +136,7 @@ function buildImageBlocks(file) {
 
 async function tagOneFile(anthropic, fileDoc) {
   const file = fileDoc.data();
-  const imageBlocks = buildImageBlocks(file);
+  const imageBlocks = await buildImageBlocks(file);
 
   if (!imageBlocks) {
     return { tags: [], description: null, skipped: true };

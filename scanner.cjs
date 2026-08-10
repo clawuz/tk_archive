@@ -393,6 +393,37 @@ async function run() {
     const files = await scanDirectory(ARCHIVE_ROOT, scanId);
     console.log(`\n📁 Found ${files.length} files\n`);
 
+    // Preserve curation from previous scans — tags (manual and Claude
+    // Vision), copyright/rights edits. Each write below is a full
+    // fileRef.set(file), so without this a re-scan would silently wipe out
+    // that work AND re-flag needs_tagging on every file, re-billing the
+    // Claude Vision pass for the whole archive every time someone re-scans.
+    // Only fields that reflect the file's actual on-disk state (size, hash,
+    // thumbnail, scan bookkeeping) are meant to refresh.
+    console.log(`🔎 Checking for existing curation to preserve...`);
+    const PRESERVE_FIELDS = [
+      'tags', 'needs_tagging', 'tagSource', 'taggedAt',
+      'description', 'descriptionSource', 'copyright', 'license', 'usage',
+    ];
+    const existingByFileId = new Map();
+    const CHUNK_SIZE = 300;
+    for (let i = 0; i < files.length; i += CHUNK_SIZE) {
+      const chunk = files.slice(i, i + CHUNK_SIZE);
+      const refs = chunk.map((f) => db.collection('files').doc(f.fileId));
+      const snaps = await db.getAll(...refs);
+      for (const snap of snaps) {
+        if (snap.exists) existingByFileId.set(snap.id, snap.data());
+      }
+    }
+    for (const file of files) {
+      const existing = existingByFileId.get(file.fileId);
+      if (!existing) continue;
+      for (const field of PRESERVE_FIELDS) {
+        if (existing[field] !== undefined) file[field] = existing[field];
+      }
+    }
+    console.log(`  Preserved curation on ${existingByFileId.size} already-scanned files\n`);
+
     // Write files to Firestore (direct writes with detailed logging)
     if (files.length > 0) {
       console.log(`💾 Writing to Firestore...`);
