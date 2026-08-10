@@ -85,6 +85,8 @@ export default function FileDetail({
   const [savingRights, setSavingRights] = useState(false)
   const [rightsError, setRightsError] = useState(null)
   const [selectedFrameIndex, setSelectedFrameIndex] = useState(0)
+  const isVideoFile = !!file.mimeType?.startsWith('video/')
+  const hasVideoFrames = file.videoPreviewFrames?.length > 0
 
   // Reset local tags when the selected file changes
   useEffect(() => {
@@ -205,60 +207,66 @@ export default function FileDetail({
 
       {/* Content */}
       <div className="flex-1 overflow-y-auto p-4 space-y-6">
-        {/* Preview Thumbnail — for videos, the selected frame; a filmstrip of
-            all 5 extracted frames sits underneath, each clickable */}
-        <div>
-          <div
-            className="relative w-full aspect-video bg-gradient-to-br from-slate-100 to-slate-200 dark:from-slate-700 dark:to-slate-600 rounded-lg overflow-hidden cursor-pointer hover:opacity-75 transition group"
-            onClick={onOpenLightbox}
-          >
-            <img
-              src={
-                file.videoPreviewFrames?.length > 0
-                  ? `data:image/jpeg;base64,${file.videoPreviewFrames[selectedFrameIndex]?.frameData}`
-                  : file.thumbnailUrl
-              }
-              alt={file.name}
-              className="w-full h-full object-cover"
-            />
-            <div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition bg-black/20">
-              <svg
-                className="w-8 h-8 text-white"
-                fill="currentColor"
-                viewBox="0 0 20 20"
-              >
-                <path d="M10 12a2 2 0 100-4 2 2 0 000 4z" />
-              </svg>
-            </div>
-          </div>
-
-          {file.videoPreviewFrames?.length > 0 && (
-            <div className="grid grid-cols-5 gap-2 mt-2">
-              {file.videoPreviewFrames.map((frame, idx) => (
-                <button
-                  key={idx}
-                  type="button"
-                  onClick={() => setSelectedFrameIndex(idx)}
-                  title={`${Math.floor(frame.timestamp)}s`}
-                  className={`relative aspect-video rounded overflow-hidden border-2 transition ${
-                    idx === selectedFrameIndex
-                      ? 'border-blue-500'
-                      : 'border-transparent hover:border-slate-300 dark:hover:border-slate-600'
-                  }`}
+        {/* Preview Thumbnail — skipped for videos with no extracted frames:
+            the actual <video> player below is already the preview then, and
+            stacking a second, often dark/unhelpful static thumbnail box
+            directly above it just reads as a broken video area. Videos with
+            extracted frames still get the hero+filmstrip picker; non-video
+            files always get the plain thumbnail (their only preview). */}
+        {(!isVideoFile || hasVideoFrames) && (
+          <div>
+            <div
+              className="relative w-full aspect-video bg-gradient-to-br from-slate-100 to-slate-200 dark:from-slate-700 dark:to-slate-600 rounded-lg overflow-hidden cursor-pointer hover:opacity-75 transition group"
+              onClick={onOpenLightbox}
+            >
+              <img
+                src={
+                  hasVideoFrames
+                    ? `data:image/jpeg;base64,${file.videoPreviewFrames[selectedFrameIndex]?.frameData}`
+                    : file.thumbnailUrl
+                }
+                alt={file.name}
+                className="w-full h-full object-cover"
+              />
+              <div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition bg-black/20">
+                <svg
+                  className="w-8 h-8 text-white"
+                  fill="currentColor"
+                  viewBox="0 0 20 20"
                 >
-                  <img
-                    src={`data:image/jpeg;base64,${frame.frameData}`}
-                    alt={`Kare ${frame.frameNumber}`}
-                    className="w-full h-full object-cover"
-                  />
-                  <span className="absolute bottom-0.5 right-0.5 text-[10px] leading-none px-1 py-0.5 bg-black/60 text-white rounded">
-                    {Math.floor(frame.timestamp)}s
-                  </span>
-                </button>
-              ))}
+                  <path d="M10 12a2 2 0 100-4 2 2 0 000 4z" />
+                </svg>
+              </div>
             </div>
-          )}
-        </div>
+
+            {hasVideoFrames && (
+              <div className="grid grid-cols-5 gap-2 mt-2">
+                {file.videoPreviewFrames.map((frame, idx) => (
+                  <button
+                    key={idx}
+                    type="button"
+                    onClick={() => setSelectedFrameIndex(idx)}
+                    title={`${Math.floor(frame.timestamp)}s`}
+                    className={`relative aspect-video rounded overflow-hidden border-2 transition ${
+                      idx === selectedFrameIndex
+                        ? 'border-blue-500'
+                        : 'border-transparent hover:border-slate-300 dark:hover:border-slate-600'
+                    }`}
+                  >
+                    <img
+                      src={`data:image/jpeg;base64,${frame.frameData}`}
+                      alt={`Kare ${frame.frameNumber}`}
+                      className="w-full h-full object-cover"
+                    />
+                    <span className="absolute bottom-0.5 right-0.5 text-[10px] leading-none px-1 py-0.5 bg-black/60 text-white rounded">
+                      {Math.floor(frame.timestamp)}s
+                    </span>
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
 
         {/* Video Preview Player */}
         <VideoPreview file={file} />
