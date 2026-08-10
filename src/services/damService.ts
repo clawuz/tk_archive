@@ -68,7 +68,16 @@ function enrichFile(file: DAMFile): DAMFileUI {
     modifiedAt,
     sizeFormatted: formatFileSize(file.size),
     dateFormatted: formatDate(modifiedAt),
-    thumbnailUrl: file.thumbnail?.url || '/placeholder-thumbnail.jpg',
+    // Drive's stored thumbnail.url (the Drive API's `thumbnailLink`) is a
+    // signed URL that Google expires after a few hours — it goes stale long
+    // before we'd ever re-scan. `drive.google.com/thumbnail?id=...` is a
+    // second, undocumented-but-stable Google endpoint keyed only by the file
+    // ID, so it never expires; prefer it for every Drive file. Local files
+    // still use the stored thumbnail (a Cloud Storage URL, not signed).
+    thumbnailUrl:
+      file.source === 'drive' && file.driveFileId
+        ? `https://drive.google.com/thumbnail?id=${file.driveFileId}&sz=w400`
+        : file.thumbnail?.url || '/placeholder-thumbnail.jpg',
     sourceLabel: file.source === 'local' ? 'Yerel' : 'Google Drive',
     isExpired: file.license?.expirationDate
       ? convertTimestamp(file.license.expirationDate) < Date.now()

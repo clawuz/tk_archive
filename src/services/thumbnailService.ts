@@ -28,18 +28,22 @@ export async function resolveThumbnail(file: DAMFile): Promise<ThumbnailResult> 
       cached: false
     };
   }
-  // Priority 2: Firestore stored thumbnail
-  else if (file.thumbnail?.url) {
+  // Priority 2: Google Drive's stable public thumbnail endpoint — checked
+  // before the stored Firestore thumbnail because that stored URL (Drive
+  // API's `thumbnailLink`) is signed and expires after a few hours, while
+  // this one is keyed only by file ID and never expires.
+  else if (file.source === 'drive' && file.driveFileId) {
     result = {
-      url: file.thumbnail.url,
+      url: `https://drive.google.com/thumbnail?id=${file.driveFileId}&sz=w200`,
       source: 'firestore',
       cached: false
     };
   }
-  // Priority 3: Google Drive native thumbnails
-  else if (file.source === 'drive' && file.driveFileId) {
+  // Priority 3: Firestore stored thumbnail (local files: a Cloud Storage
+  // URL, not signed/expiring)
+  else if (file.thumbnail?.url) {
     result = {
-      url: `https://drive.google.com/thumbnail?id=${file.driveFileId}&sz=w200`,
+      url: file.thumbnail.url,
       source: 'firestore',
       cached: false
     };

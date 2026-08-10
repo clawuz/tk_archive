@@ -412,7 +412,7 @@ export default function FileDetail({
                     type="text"
                     value={rightsForm.owner}
                     onChange={(e) => setRightsForm({ ...rightsForm, owner: e.target.value })}
-                    className="w-full px-2 py-1 text-sm bg-slate-50 dark:bg-slate-700 border border-slate-300 dark:border-slate-600 rounded"
+                    className="w-full px-2 py-1 text-sm bg-slate-50 dark:bg-slate-700 border border-slate-300 dark:border-slate-600 rounded text-slate-900 dark:text-white"
                   />
                 </div>
                 <div>
@@ -424,7 +424,7 @@ export default function FileDetail({
                     value={rightsForm.productionCompany}
                     onChange={(e) => setRightsForm({ ...rightsForm, productionCompany: e.target.value })}
                     placeholder="Örn. XYZ Prodüksiyon"
-                    className="w-full px-2 py-1 text-sm bg-slate-50 dark:bg-slate-700 border border-slate-300 dark:border-slate-600 rounded"
+                    className="w-full px-2 py-1 text-sm bg-slate-50 dark:bg-slate-700 border border-slate-300 dark:border-slate-600 rounded text-slate-900 dark:text-white"
                   />
                 </div>
                 <div>
@@ -436,7 +436,7 @@ export default function FileDetail({
                     value={rightsForm.department}
                     onChange={(e) => setRightsForm({ ...rightsForm, department: e.target.value })}
                     placeholder="Örn. Kurumsal İletişim"
-                    className="w-full px-2 py-1 text-sm bg-slate-50 dark:bg-slate-700 border border-slate-300 dark:border-slate-600 rounded"
+                    className="w-full px-2 py-1 text-sm bg-slate-50 dark:bg-slate-700 border border-slate-300 dark:border-slate-600 rounded text-slate-900 dark:text-white"
                   />
                 </div>
                 <div>
@@ -448,7 +448,7 @@ export default function FileDetail({
                     value={rightsForm.contactPerson}
                     onChange={(e) => setRightsForm({ ...rightsForm, contactPerson: e.target.value })}
                     placeholder="Örn. Ad Soyad"
-                    className="w-full px-2 py-1 text-sm bg-slate-50 dark:bg-slate-700 border border-slate-300 dark:border-slate-600 rounded"
+                    className="w-full px-2 py-1 text-sm bg-slate-50 dark:bg-slate-700 border border-slate-300 dark:border-slate-600 rounded text-slate-900 dark:text-white"
                   />
                 </div>
                 <div>
@@ -458,7 +458,7 @@ export default function FileDetail({
                   <select
                     value={rightsForm.licenseType}
                     onChange={(e) => setRightsForm({ ...rightsForm, licenseType: e.target.value })}
-                    className="w-full px-2 py-1 text-sm bg-slate-50 dark:bg-slate-700 border border-slate-300 dark:border-slate-600 rounded"
+                    className="w-full px-2 py-1 text-sm bg-slate-50 dark:bg-slate-700 border border-slate-300 dark:border-slate-600 rounded text-slate-900 dark:text-white"
                   >
                     {LICENSE_TYPES.map((lt) => (
                       <option key={lt} value={lt}>{lt}</option>
@@ -473,7 +473,7 @@ export default function FileDetail({
                     type="date"
                     value={rightsForm.expirationDate}
                     onChange={(e) => setRightsForm({ ...rightsForm, expirationDate: e.target.value })}
-                    className="w-full px-2 py-1 text-sm bg-slate-50 dark:bg-slate-700 border border-slate-300 dark:border-slate-600 rounded"
+                    className="w-full px-2 py-1 text-sm bg-slate-50 dark:bg-slate-700 border border-slate-300 dark:border-slate-600 rounded text-slate-900 dark:text-white"
                   />
                 </div>
                 <div>
@@ -485,7 +485,7 @@ export default function FileDetail({
                     onChange={(e) => setRightsForm({ ...rightsForm, usageRights: e.target.value })}
                     rows={3}
                     placeholder="Örn. sadece sosyal medya, Nisan 2026'ya kadar geçerli..."
-                    className="w-full px-2 py-1 text-sm bg-slate-50 dark:bg-slate-700 border border-slate-300 dark:border-slate-600 rounded"
+                    className="w-full px-2 py-1 text-sm bg-slate-50 dark:bg-slate-700 border border-slate-300 dark:border-slate-600 rounded text-slate-900 dark:text-white"
                   />
                 </div>
 

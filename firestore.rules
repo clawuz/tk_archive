@@ -75,14 +75,13 @@ service cloud.firestore {
     // ========================================================================
 
     // Files collection — DAM file metadata
-    // TEST MODE: public read access (no login screen yet). Write is real
-    // security: only an authenticated admin/super_admin may add/remove tags
-    // or edit copyright/license fields. Everyone else — including the
-    // unauthenticated test-mode client — is rejected server-side, regardless
-    // of what the client's local (fake) role state claims.
+    // TEST MODE: public read AND write (no login screen wired in yet — see
+    // AuthProvider.jsx's hardcoded test-user). Restore the commented rule
+    // below once real Firebase Auth + Firestore user roles are wired in.
     match /files/{fileId} {
       allow read: if true;
-      allow write: if isAuthenticated() && isAllowedDomain() && (hasRole('admin') || hasRole('super_admin'));
+      allow write: if true; // TEST MODE - remove after real login is wired in
+      // allow write: if isAuthenticated() && isAllowedDomain() && (hasRole('admin') || hasRole('super_admin'));
     }
 
     // Changes collection — incremental file changes
