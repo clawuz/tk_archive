@@ -59,11 +59,16 @@ istanbul, bogazici, kapadokya, gobeklitepe, global-destinasyon
 MARKALAR (SADECE logo/renk net görünüyorsa):
 turkish-airlines, turkish-cargo, ajet, turkish-technic, miles-and-smiles, tkpay, youth-club, do-and-co, tgs
 
-TK STORE / MERCHANDISE:
+TK STORE / MERCHANDISE — SADECE görsel gerçekten bir ürünün stüdyo/e-ticaret tarzı çekimiyse (izole arka plan, ürün paketin önünde/tek başına) kullan:
 tk-store, ucak-maketi, oyuncak, giyim
 
 SPONSORLUK & ÖDÜL (SADECE logo/grafik net okunuyorsa):
 milli-takim, uefa, euroleague, skytrax, apex, guinness
+
+PRODÜKSİYON İÇERİĞİ — bir reklam filmi, kurumsal film veya yayının kare/kapak görseliyse (sahne, oyuncu, el, ofis, masa gibi anlatı unsurları — ürün çekimi DEĞİL):
+kurumsal-film, reklam-filmi, kurumsal-yayin
+
+ÖNEMLİ — TEK KARE UYARISI: Sana verilen görsel bazen bir videonun SADECE TEK BİR karesi (Drive'ın otomatik oluşturduğu küçük resim) olabilir — bu, videonun geneli hakkında güvenilir bilgi vermez. Böyle bir karede el, masa, ofis eşyası, biniş kartı gibi belirsiz/anlatısal bir sahne görüyorsan bunu ürün fotoğrafı SANMA — "tk-store" veya "ucak-maketi" gibi ürün etiketleri EKLEME. Bunun yerine "kurumsal-film" veya "reklam-filmi" kullan. Dosya adı sana ek bağlam olarak verilecek (örn. "EPIC FILM", "Anafilm", "MASTER" gibi kelimeler bunun bir film olduğunu gösterir) — bunu görselle birlikte değerlendir.
 
 Fotoğraf gökyüzünde uçan bir uçağı başka bir uçaktan/dışarıdan çekilmiş şekilde gösteriyorsa "air-to-air" etiketini ekle.
 
@@ -150,7 +155,10 @@ async function tagOneFile(anthropic, fileDoc) {
       role: 'user',
       content: [
         ...imageBlocks,
-        { type: 'text', text: 'Bu görseli/kareleri yukarıdaki taksonomiye göre etiketle.' },
+        {
+          type: 'text',
+          text: `Dosya adı: "${file.name}"\n\nBu görseli/kareleri, dosya adını da bağlam olarak kullanarak yukarıdaki taksonomiye göre etiketle.`,
+        },
       ],
     }],
     output_config: { format: TAGGING_OUTPUT_SCHEMA },
