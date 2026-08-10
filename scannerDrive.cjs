@@ -90,8 +90,16 @@ async function getMimeType(mimeType) {
   return mimeMap[mimeType] || mimeType || 'application/octet-stream';
 }
 
-async function scanDriveFolder(drive, folderId, scanId) {
+// folderPath accumulates folder names from the scan root down (used for
+// extractAutoTags, same as scanner.cjs's relative-path breadcrumb for local
+// files) — [DRIVE_FOLDER_NAME] at the top call, one more segment per level
+// of recursion. depth is just a sanity cap against runaway recursion.
+async function scanDriveFolder(drive, folderId, scanId, folderPath = [], depth = 0) {
   const files = [];
+  if (depth > 10) {
+    console.warn(`\n⚠️  Max folder depth (10) reached at ${folderPath.join('/')}, not recursing further`);
+    return files;
+  }
   let pageToken = null;
 
   try {
@@ -110,11 +118,12 @@ async function scanDriveFolder(drive, folderId, scanId) {
       const driveFiles = result.data.files || [];
 
       for (const file of driveFiles) {
-        // Skip Google Workspace files (folders, docs, etc)
+        // Recurse into subfolders — the archive is organized this way
+        // (AIRCRAFTS, CABIN-CREW, STOCK FOOTAGE, ...), so a flat single-level
+        // scan was missing almost everything.
         if (file.mimeType === 'application/vnd.google-apps.folder') {
-          // Optionally recurse into folders
-          // const subFiles = await scanDriveFolder(drive, file.id, scanId);
-          // files.push(...subFiles);
+          const subFiles = await scanDriveFolder(drive, file.id, scanId, [...folderPath, file.name], depth + 1);
+          files.push(...subFiles);
           continue;
         }
 
@@ -132,7 +141,7 @@ async function scanDriveFolder(drive, folderId, scanId) {
           type: file.mimeType,
           size: parseInt(file.size) || 0,
           hash: `drive:${file.id}`, // Google Drive IDs as hash
-          tags: extractAutoTags([DRIVE_FOLDER_NAME, file.name]),
+          tags: extractAutoTags([...folderPath, file.name]),
           createdAt: new Date(file.createdTime).getTime(),
           modifiedAt: new Date(file.modifiedTime).getTime(),
           uploadedAt: Date.now(),
@@ -172,7 +181,7 @@ async function scanDriveFolder(drive, folderId, scanId) {
     } while (pageToken);
 
   } catch (err) {
-    console.error(`\n❌ Error scanning Drive:`, err.message);
+    console.error(`\n❌ Error scanning Drive folder ${folderPath.join('/')}:`, err.message);
   }
 
   return files;
@@ -206,7 +215,7 @@ async function run() {
 
     // Scan Drive folder
     console.log(`🔍 Scanning Google Drive...`);
-    const files = await scanDriveFolder(drive, DRIVE_FOLDER_ID, scanId);
+    const files = await scanDriveFolder(drive, DRIVE_FOLDER_ID, scanId, [DRIVE_FOLDER_NAME]);
     console.log(`\n📁 Found ${files.length} files\n`);
 
     // Preserve curation from previous scans — same reasoning as
