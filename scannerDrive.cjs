@@ -49,34 +49,45 @@ async function uploadDriveVideoIfNeeded(drive, driveFileId, ext) {
   });
 }
 
-// Configuration
-const DRIVE_FOLDER_ID = process.argv[2] || 'root'; // 'root' = My Drive
+// Configuration — a real folder ID is required (not 'root'/My Drive): a
+// service account has no personal Drive of its own, so it can only see
+// folders explicitly shared with it (see authorize() below).
+const DRIVE_FOLDER_ID = process.argv[2];
 const DRIVE_FOLDER_NAME = process.argv[3] || 'Google Drive';
+
+if (!DRIVE_FOLDER_ID) {
+  console.error('❌ Missing folder ID.');
+  console.error('\nUsage: node scannerDrive.cjs <driveFolderId> [folderName]');
+  console.error(`\nThe folder must first be shared (Viewer access is enough) with:`);
+  console.error(`  archive-scanner@tk-archive-cd9d0.iam.gserviceaccount.com`);
+  console.error('\nThe folder ID is the last segment of its Drive URL:');
+  console.error('  https://drive.google.com/drive/folders/<THIS PART>\n');
+  process.exit(1);
+}
 
 console.log(`\n📂 Scanning Google Drive folder: ${DRIVE_FOLDER_NAME}`);
 console.log(`🔄 Folder ID: ${DRIVE_FOLDER_ID}\n`);
 
-// Get OAuth2 client from environment or token file
-async function authorize() {
-  try {
-    // Try to load stored token
-    const tokenPath = path.join(__dirname, 'functions/config/drive-token.json');
-    if (fs.existsSync(tokenPath)) {
-      const token = JSON.parse(fs.readFileSync(tokenPath, 'utf8'));
-      return token;
-    }
-
-    console.error('❌ Google Drive token not found!');
-    console.error(`\nSetup instructions:`);
-    console.error(`1. Visit: https://developers.google.com/drive/api/quickstart/nodejs`);
-    console.error(`2. Create OAuth 2.0 Desktop App credentials`);
-    console.error(`3. Save credentials to: functions/config/credentials.json`);
-    console.error(`4. Run: node scannerDrive.cjs --auth\n`);
-    process.exit(1);
-  } catch (err) {
-    console.error('❌ Auth error:', err.message);
+// Service-account auth: the scanner runs unattended (no browser, no user
+// consent screen), so it authenticates as its own Google identity rather
+// than a real user's — archive-scanner@tk-archive-cd9d0.iam.gserviceaccount.com.
+// That identity only sees Drive folders explicitly shared with it.
+function authorize() {
+  const keyPath = path.join(__dirname, 'functions/config/driveServiceAccountKey.json');
+  if (!fs.existsSync(keyPath)) {
+    console.error('❌ Drive service account key not found!');
+    console.error(`\nExpected: ${keyPath}`);
+    console.error('Generate one with:');
+    console.error('  gcloud iam service-accounts keys create functions/config/driveServiceAccountKey.json \\');
+    console.error('    --iam-account=archive-scanner@tk-archive-cd9d0.iam.gserviceaccount.com\n');
     process.exit(1);
   }
+  const key = JSON.parse(fs.readFileSync(keyPath, 'utf8'));
+  return new google.auth.JWT({
+    email: key.client_email,
+    key: key.private_key,
+    scopes: ['https://www.googleapis.com/auth/drive.readonly'],
+  });
 }
 
 async function getMimeType(mimeType) {
@@ -186,12 +197,8 @@ async function run() {
   const startTime = Date.now();
 
   try {
-    // Get auth token
-    const token = await authorize();
-
     // Create Google Drive API client
-    const auth = new google.auth.OAuth2();
-    auth.setCredentials(token);
+    const auth = authorize();
     const drive = google.drive({ version: 'v3', auth });
 
     // Create scan document
