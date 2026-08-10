@@ -9,11 +9,11 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const crypto = require('crypto');
-const { exec, execFile } = require('child_process');
+const { execFile } = require('child_process');
 const { promisify } = require('util');
 const { extractAutoTags } = require('./lib/autoTags.cjs');
+const { isVideoFile, extractVideoFrames } = require('./lib/videoFrames.cjs');
 
-const execPromise = promisify(exec);
 const execFilePromise = promisify(execFile);
 
 console.log('📦 Loading firebase-admin...');
@@ -212,12 +212,9 @@ function getMimeType(ext) {
   return mimeTypes[ext.toLowerCase()] || 'application/octet-stream';
 }
 
-function isVideoFile(filePath) {
-  const ext = path.extname(filePath).toLowerCase().slice(1);
-  return ['mp4', 'mov', 'mkv', 'avi', 'webm', 'flv', 'wmv', 'mts', 'm2ts'].includes(ext);
-}
-
-// slugify/extractAutoTags now live in lib/autoTags.cjs (shared with scannerDrive.cjs).
+// isVideoFile/getVideoDuration/extractVideoFrames now live in
+// lib/videoFrames.cjs; slugify/extractAutoTags in lib/autoTags.cjs — both
+// shared with scannerDrive.cjs.
 
 // File types macOS Quick Look can render a preview for. Covers images,
 // documents, PDFs, and Office files without needing per-format libraries.
@@ -250,70 +247,6 @@ async function generateThumbnail(filePath, fileId) {
   }
 }
 
-async function getVideoDuration(videoPath) {
-  try {
-    const cmd = `/opt/homebrew/bin/ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 "${videoPath}"`;
-    const { stdout } = await execPromise(cmd);
-    const duration = parseFloat(stdout.trim());
-    if (duration > 0) {
-      console.log(`  ⏱️  Duration: ${Math.round(duration)}s`);
-      return duration;
-    }
-    return null;
-  } catch (err) {
-    console.error(`\n⚠️  Could not get duration for ${path.basename(videoPath)}: ${err.message}`);
-    return null;
-  }
-}
-
-async function extractVideoFrames(videoPath, scanId) {
-  try {
-    if (!isVideoFile(videoPath)) return null;
-
-    const duration = await getVideoDuration(videoPath);
-    if (!duration) return null;
-
-    // Extract frames at 10%, 30%, 50%, 70%, 90%
-    const timestamps = [
-      duration * 0.10,
-      duration * 0.30,
-      duration * 0.50,
-      duration * 0.70,
-      duration * 0.90
-    ];
-
-    const frames = [];
-
-    for (let i = 0; i < timestamps.length; i++) {
-      const timestamp = timestamps[i];
-      const frameFile = `/tmp/frame-${scanId}-${i}.jpg`;
-
-      try {
-        await execPromise(
-          `ffmpeg -i "${videoPath}" -ss ${timestamp} -vframes 1 -q:v 8 -vf scale=320:-1 "${frameFile}" -y 2>/dev/null`
-        );
-
-        const frameData = fs.readFileSync(frameFile, 'base64');
-        const frameSizeKB = (frameData.length / 1024).toFixed(2);
-        frames.push({
-          timestamp: Math.round(timestamp),
-          frameData: frameData,
-          frameNumber: i + 1
-        });
-        console.log(`    Frame ${i + 1}: ${frameSizeKB} KB`);
-
-        fs.unlinkSync(frameFile);
-      } catch (err) {
-        console.error(`⚠️  Frame extraction failed for ${videoPath} at ${timestamp}s`);
-      }
-    }
-
-    return frames.length > 0 ? frames : null;
-  } catch (err) {
-    console.error(`⚠️  Error extracting frames from ${videoPath}:`, err.message);
-    return null;
-  }
-}
 
 async function run() {
   const startTime = Date.now();

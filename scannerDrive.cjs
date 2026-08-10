@@ -10,6 +10,7 @@ const path = require('path');
 const { google } = require('googleapis');
 const admin = require('firebase-admin');
 const { extractAutoTags } = require('./lib/autoTags.cjs');
+const { extractVideoFrames } = require('./lib/videoFrames.cjs');
 
 console.log('📦 Loading firebase-admin...');
 const serviceAccount = JSON.parse(
@@ -23,11 +24,39 @@ admin.initializeApp({
 
 const db = admin.firestore();
 
-// Drive-sourced videos play directly from Google's own embeddable viewer
-// (https://drive.google.com/file/d/{id}/preview — see streamingService.ts),
-// so unlike scanner.cjs's local videos, nothing here needs downloading or
-// re-uploading to Cloud Storage. Cheaper and simpler: no bandwidth, no
-// duplicate storage, and Drive already serves it reliably.
+// Drive-sourced videos still play directly from Google's own embeddable
+// viewer (https://drive.google.com/file/d/{id}/preview — see
+// streamingService.ts), never re-uploaded to our own Cloud Storage: no
+// duplicate storage, and Drive already serves playback reliably. But
+// Claude Vision tagging needs more than Drive's single auto-generated
+// thumbnail to judge a video accurately (see the mistagged corporate
+// films this fixed), so each video is downloaded briefly to /tmp, run
+// through the same 5-frame ffmpeg extraction scanner.cjs uses for local
+// videos, then deleted immediately — only the 5 small JPEG frames persist
+// (in Firestore, same as local videos), never the video bytes themselves.
+const VIDEO_MIME_TYPES = new Set(['video/mp4', 'video/quicktime', 'video/x-matroska', 'video/webm']);
+
+async function extractDriveVideoFrames(drive, driveFileId, ext, scanId) {
+  const tempPath = `/tmp/drive-video-${driveFileId}.${ext.toLowerCase()}`;
+  try {
+    const res = await drive.files.get(
+      { fileId: driveFileId, alt: 'media' },
+      { responseType: 'stream' }
+    );
+    await new Promise((resolve, reject) => {
+      res.data
+        .pipe(fs.createWriteStream(tempPath))
+        .on('error', reject)
+        .on('finish', resolve);
+    });
+    return await extractVideoFrames(tempPath, scanId);
+  } catch (err) {
+    console.error(`⚠️  Frame extraction failed for ${driveFileId}:`, err.message);
+    return null;
+  } finally {
+    fs.rmSync(tempPath, { force: true });
+  }
+}
 
 // Configuration — a real folder ID is required (not 'root'/My Drive): a
 // service account has no personal Drive of its own, so it can only see
@@ -117,6 +146,15 @@ async function scanDriveFolder(drive, folderId, scanId) {
         const resolvedMimeType = await getMimeType(file.mimeType);
         const extension = file.name.split('.').pop() || '';
 
+        let videoPreviewFrames = null;
+        if (VIDEO_MIME_TYPES.has(resolvedMimeType) && extension) {
+          console.log(`\n  🎬 Extracting frames: ${file.name}`);
+          videoPreviewFrames = await extractDriveVideoFrames(drive, file.id, extension, scanId);
+          if (videoPreviewFrames) {
+            console.log(`  ✅ Extracted ${videoPreviewFrames.length} frames`);
+          }
+        }
+
         const fileDoc = {
           fileId: file.id,
           name: file.name,
@@ -140,9 +178,10 @@ async function scanDriveFolder(drive, folderId, scanId) {
             generated: false,
             generatedAt: Date.now()
           } : null,
+          videoPreviewFrames: videoPreviewFrames || null,
           // Flag for the server-side Claude Vision tagging function
           // (functions/tagNewFiles.js) — same as scanner.cjs's local files.
-          needs_tagging: !!file.thumbnailLink,
+          needs_tagging: !!(videoPreviewFrames || file.thumbnailLink),
           copyright: {
             owner: 'TK',
             year: new Date().getFullYear()
