@@ -15,7 +15,9 @@ export default function VideoPreview({ file }) {
         return;
       }
 
-      if (isFileTooLarge(file.size)) {
+      // Drive's own viewer streams the file — our bandwidth is never in the
+      // loop, so the local size cap doesn't apply there.
+      if (file.source !== 'drive' && isFileTooLarge(file.size)) {
         setError(`File too large (${getFileSize(file.size)}). Download to play locally.`);
         setCanPreview(false);
         return;
@@ -42,10 +44,16 @@ export default function VideoPreview({ file }) {
             <p className="text-sm text-slate-600 dark:text-slate-400">Size: {getFileSize(file.size)}</p>
           </div>
         </div>
+      ) : file.source === 'drive' ? (
+        // Google Drive's own embeddable viewer — no download/re-upload.
+        <iframe
+          src={streamUrl}
+          title={file.name}
+          className="w-full h-96"
+          allowFullScreen
+        />
       ) : (
-        // Both local- and Drive-sourced videos are served from the same
-        // Cloud Storage bucket (see streamingService.ts), so one player
-        // covers both.
+        // Local file, served from our Cloud Storage bucket (streamingService.ts).
         <video
           src={streamUrl}
           controls

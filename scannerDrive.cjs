@@ -22,32 +22,11 @@ admin.initializeApp({
 
 const db = admin.firestore();
 
-// Same bucket/convention scanner.cjs uploads local videos to — `{fileId}.{ext}`,
-// so the frontend can derive the playback URL from fileId + extension alone,
-// with no Firestore field needed and no distinction between local and Drive
-// sources once uploaded (see src/services/streamingService.ts).
-const VIDEO_BUCKET = 'tk-archive-cd9d0-videos';
-const VIDEO_MIME_TYPES = new Set(['video/mp4', 'video/quicktime', 'video/x-matroska', 'video/webm']);
-
-async function uploadDriveVideoIfNeeded(drive, driveFileId, ext) {
-  const objectName = `${driveFileId}.${ext.toLowerCase()}`;
-  const bucket = admin.storage().bucket(VIDEO_BUCKET);
-  const object = bucket.file(objectName);
-  const [exists] = await object.exists();
-  if (exists) return;
-
-  const res = await drive.files.get(
-    { fileId: driveFileId, alt: 'media' },
-    { responseType: 'stream' }
-  );
-
-  await new Promise((resolve, reject) => {
-    res.data
-      .pipe(object.createWriteStream())
-      .on('error', reject)
-      .on('finish', resolve);
-  });
-}
+// Drive-sourced videos play directly from Google's own embeddable viewer
+// (https://drive.google.com/file/d/{id}/preview — see streamingService.ts),
+// so unlike scanner.cjs's local videos, nothing here needs downloading or
+// re-uploading to Cloud Storage. Cheaper and simpler: no bandwidth, no
+// duplicate storage, and Drive already serves it reliably.
 
 // Configuration — a real folder ID is required (not 'root'/My Drive): a
 // service account has no personal Drive of its own, so it can only see
@@ -136,14 +115,6 @@ async function scanDriveFolder(drive, folderId, scanId) {
 
         const resolvedMimeType = await getMimeType(file.mimeType);
         const extension = file.name.split('.').pop() || '';
-
-        if (VIDEO_MIME_TYPES.has(resolvedMimeType) && extension) {
-          try {
-            await uploadDriveVideoIfNeeded(drive, file.id, extension);
-          } catch (uploadErr) {
-            console.error(`\n⚠️  Video upload failed for ${file.name}:`, uploadErr.message);
-          }
-        }
 
         const fileDoc = {
           fileId: file.id,

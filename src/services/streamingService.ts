@@ -2,12 +2,13 @@ import { DAMFile } from '../types/dam';
 
 const SUPPORTED_VIDEO_FORMATS = ['video/mp4', 'video/quicktime', 'video/x-matroska'];
 
-// Public Cloud Storage bucket the scanners (scanner.cjs, scannerDrive.cjs)
-// upload every video to, keyed by `{fileId}.{extension}` — a fixed
-// convention, so the playback URL is computed here rather than read from a
-// stored Firestore field. Works identically for local- and Drive-sourced
-// files once the scanner has uploaded them, and identically in dev and
-// production (it's a public GCS URL, not a local dev-server route).
+// Public Cloud Storage bucket scanner.cjs uploads local videos to, keyed by
+// `{fileId}.{extension}` — a fixed convention, so the playback URL is
+// computed here rather than read from a stored Firestore field. Only local
+// files land in this bucket: Drive-sourced videos play straight from
+// Google's own embeddable viewer instead (no download/re-upload — Drive
+// already serves them reliably, and duplicating the bytes would just cost
+// bandwidth and storage for no benefit).
 const VIDEO_BUCKET = 'tk-archive-cd9d0-videos';
 
 export function canStream(file: DAMFile): boolean {
@@ -16,6 +17,12 @@ export function canStream(file: DAMFile): boolean {
 
 export function getStreamUrl(file: DAMFile): string | null {
   if (!canStream(file)) return null;
+
+  if (file.source === 'drive') {
+    if (!file.driveFileId) return null;
+    return `https://drive.google.com/file/d/${file.driveFileId}/preview`;
+  }
+
   if (!file.extension) return null;
   return `https://storage.googleapis.com/${VIDEO_BUCKET}/${file.fileId}.${file.extension.toLowerCase()}`;
 }
