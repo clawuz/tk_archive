@@ -42,6 +42,22 @@ admin.initializeApp({
 
 const db = admin.firestore();
 
+// Videos are uploaded here under a deterministic `{fileId}.{ext}` key so the
+// frontend can compute the playback URL without any Firestore field for it
+// (see src/services/streamingService.ts) — same bucket/convention used by
+// scannerDrive.cjs, so local and Drive videos are indistinguishable to the
+// player once uploaded.
+const VIDEO_BUCKET = 'tk-archive-cd9d0-videos';
+
+async function uploadVideoIfNeeded(fullPath, fileId, ext) {
+  const objectName = `${fileId}.${ext.toLowerCase()}`;
+  const bucket = admin.storage().bucket(VIDEO_BUCKET);
+  const object = bucket.file(objectName);
+  const [exists] = await object.exists();
+  if (exists) return;
+  await bucket.upload(fullPath, { destination: objectName });
+}
+
 // Configuration
 const ARCHIVE_ROOT = process.argv[2] || '/Users/okilavuz/Desktop/Omer/TK-2026';
 const FORCE_SCAN = process.argv[3] === '--force';
@@ -93,6 +109,11 @@ async function scanDirectory(dirPath, scanId) {
             videoPreviewFrames = await extractVideoFrames(fullPath, fileId);
             if (videoPreviewFrames) {
               console.log(`\n✅ Extracted ${videoPreviewFrames.length} frames from ${entry.name}`);
+            }
+            try {
+              await uploadVideoIfNeeded(fullPath, fileId, ext);
+            } catch (uploadErr) {
+              console.error(`\n⚠️  Video upload failed for ${entry.name}:`, uploadErr.message);
             }
           }
 

@@ -17,10 +17,37 @@ const serviceAccount = JSON.parse(
 
 admin.initializeApp({
   credential: admin.credential.cert(serviceAccount),
-  projectId: 'tk-archive-dam'
+  projectId: 'tk-archive-cd9d0'
 });
 
 const db = admin.firestore();
+
+// Same bucket/convention scanner.cjs uploads local videos to — `{fileId}.{ext}`,
+// so the frontend can derive the playback URL from fileId + extension alone,
+// with no Firestore field needed and no distinction between local and Drive
+// sources once uploaded (see src/services/streamingService.ts).
+const VIDEO_BUCKET = 'tk-archive-cd9d0-videos';
+const VIDEO_MIME_TYPES = new Set(['video/mp4', 'video/quicktime', 'video/x-matroska', 'video/webm']);
+
+async function uploadDriveVideoIfNeeded(drive, driveFileId, ext) {
+  const objectName = `${driveFileId}.${ext.toLowerCase()}`;
+  const bucket = admin.storage().bucket(VIDEO_BUCKET);
+  const object = bucket.file(objectName);
+  const [exists] = await object.exists();
+  if (exists) return;
+
+  const res = await drive.files.get(
+    { fileId: driveFileId, alt: 'media' },
+    { responseType: 'stream' }
+  );
+
+  await new Promise((resolve, reject) => {
+    res.data
+      .pipe(object.createWriteStream())
+      .on('error', reject)
+      .on('finish', resolve);
+  });
+}
 
 // Configuration
 const DRIVE_FOLDER_ID = process.argv[2] || 'root'; // 'root' = My Drive
@@ -96,13 +123,24 @@ async function scanDriveFolder(drive, folderId, scanId) {
           continue;
         }
 
+        const resolvedMimeType = await getMimeType(file.mimeType);
+        const extension = file.name.split('.').pop() || '';
+
+        if (VIDEO_MIME_TYPES.has(resolvedMimeType) && extension) {
+          try {
+            await uploadDriveVideoIfNeeded(drive, file.id, extension);
+          } catch (uploadErr) {
+            console.error(`\n⚠️  Video upload failed for ${file.name}:`, uploadErr.message);
+          }
+        }
+
         const fileDoc = {
           fileId: file.id,
           name: file.name,
           path: file.webViewLink || `https://drive.google.com/file/d/${file.id}`,
           source: 'drive',
-          extension: file.name.split('.').pop() || '',
-          mimeType: await getMimeType(file.mimeType),
+          extension,
+          mimeType: resolvedMimeType,
           type: file.mimeType,
           size: parseInt(file.size) || 0,
           hash: `drive:${file.id}`, // Google Drive IDs as hash

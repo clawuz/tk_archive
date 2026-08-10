@@ -10,3 +10,4 @@ dist/
 *.swo
 functions/config/
 *serviceAccountKey*.json
+.firebase/

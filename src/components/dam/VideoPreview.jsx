@@ -42,16 +42,10 @@ export default function VideoPreview({ file }) {
             <p className="text-sm text-slate-600 dark:text-slate-400">Size: {getFileSize(file.size)}</p>
           </div>
         </div>
-      ) : file.source === 'drive' ? (
-        // Google Drive embedded preview
-        <iframe
-          src={streamUrl}
-          title={file.name}
-          className="w-full h-96"
-          allowFullScreen
-        />
       ) : (
-        // Local file video player (HTML5)
+        // Both local- and Drive-sourced videos are served from the same
+        // Cloud Storage bucket (see streamingService.ts), so one player
+        // covers both.
         <video
           src={streamUrl}
           controls
