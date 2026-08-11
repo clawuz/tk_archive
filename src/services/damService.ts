@@ -10,6 +10,8 @@ import {
   addDoc,
   updateDoc,
   deleteDoc,
+  setDoc,
+  increment,
   query,
   where,
   orderBy,
@@ -280,14 +282,33 @@ export async function updateFile(
 }
 
 /**
+ * Keeps the `tags` collection's usageCount in sync with tags actually
+ * present on files — getTags() (used by the tag filter and search
+ * autocomplete) reads from this collection, not by scanning every file.
+ * setDoc with merge upserts: a tag used for the first time gets its doc
+ * created here, not just incremented.
+ */
+async function bumpTagUsage(tagName: string, delta: number): Promise<void> {
+  const tagRef = doc(db, TAGS_COLLECTION, tagName)
+  await setDoc(
+    tagRef,
+    { tagId: tagName, displayName: tagName, usageCount: increment(delta) },
+    { merge: true }
+  )
+}
+
+/**
  * Add tags to file
  */
 export async function addTagsToFile(fileId: string, tags: string[]): Promise<void> {
   try {
     const file = await getFile(fileId)
     if (file) {
-      const updated = new Set([...file.tags, ...tags])
+      const newTags = tags.filter((t) => !file.tags.includes(t))
+      if (newTags.length === 0) return
+      const updated = new Set([...file.tags, ...newTags])
       await updateFile(fileId, { tags: Array.from(updated) })
+      await Promise.all(newTags.map((t) => bumpTagUsage(t, 1)))
     }
   } catch (error) {
     console.error('Error adding tags:', error)
@@ -303,7 +324,9 @@ export async function removeTagFromFile(fileId: string, tag: string): Promise<vo
     const file = await getFile(fileId)
     if (file) {
       const updated = file.tags.filter((t) => t !== tag)
+      if (updated.length === file.tags.length) return
       await updateFile(fileId, { tags: updated })
+      await bumpTagUsage(tag, -1)
     }
   } catch (error) {
     console.error('Error removing tag:', error)

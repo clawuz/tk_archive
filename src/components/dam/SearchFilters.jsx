@@ -13,6 +13,7 @@ export default function SearchFilters({ filters, onChange }) {
     filters.dateRange?.to ? new Date(filters.dateRange.to).toISOString().slice(0, 7) : ''
   )
   const [selectedLicenseTypes, setSelectedLicenseTypes] = useState(filters.licenseType || [])
+  const [showTagSuggestions, setShowTagSuggestions] = useState(false)
 
   const LICENSE_TYPE_LABELS = {
     commercial: 'commercial — Ticari Kullanım',
@@ -55,6 +56,28 @@ export default function SearchFilters({ filters, onChange }) {
     setSelectedTags(updated)
     onChange({ tags: updated })
   }
+
+  // Picking a suggestion applies it as a real tag filter (a fast, exact
+  // Firestore query) instead of leaving it as free text, which has to
+  // scan every raw document client-side to find matches — much slower for
+  // an uncommon term. The text box clears so the two don't stack.
+  function handleSelectTagSuggestion(tagId) {
+    handleTagToggle(tagId)
+    setSearchQuery('')
+    onChange({ query: '' })
+    setShowTagSuggestions(false)
+  }
+
+  const tagSuggestions =
+    searchQuery.trim().length > 0
+      ? tags
+          .filter(
+            (tag) =>
+              !selectedTags.includes(tag.tagId) &&
+              tag.displayName.toLowerCase().includes(searchQuery.trim().toLowerCase())
+          )
+          .slice(0, 8)
+      : []
 
   function handleSortChange(sortBy, sortOrder) {
     onChange({ sortBy, sortOrder })
@@ -132,17 +155,50 @@ export default function SearchFilters({ filters, onChange }) {
 
       <div className="p-4 space-y-6">
         {/* Search */}
-        <div>
+        <div className="relative">
           <label className="block text-sm font-medium text-slate-900 dark:text-white mb-2">
             🔍 Ara
           </label>
           <input
             type="text"
             value={searchQuery}
-            onChange={(e) => handleSearchChange(e.target.value)}
+            onChange={(e) => {
+              handleSearchChange(e.target.value)
+              setShowTagSuggestions(true)
+            }}
+            onFocus={() => setShowTagSuggestions(true)}
+            onBlur={() => setShowTagSuggestions(false)}
+            onKeyDown={(e) => {
+              if (e.key === 'Escape') setShowTagSuggestions(false)
+            }}
             placeholder="Dosya adı, etiket..."
+            autoComplete="off"
             className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-700 border border-slate-300 dark:border-slate-600 rounded-lg text-slate-900 dark:text-white placeholder-slate-500 dark:placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500"
           />
+
+          {showTagSuggestions && tagSuggestions.length > 0 && (
+            <ul className="absolute z-10 mt-1 w-full bg-white dark:bg-slate-700 border border-slate-300 dark:border-slate-600 rounded-lg shadow-lg max-h-56 overflow-y-auto">
+              {tagSuggestions.map((tag) => (
+                <li key={tag.tagId}>
+                  <button
+                    type="button"
+                    // onMouseDown fires before the input's onBlur, so the
+                    // click registers before the dropdown closes.
+                    onMouseDown={(e) => {
+                      e.preventDefault()
+                      handleSelectTagSuggestion(tag.tagId)
+                    }}
+                    className="w-full flex items-center justify-between px-3 py-2 text-sm text-left text-slate-700 dark:text-slate-200 hover:bg-blue-50 dark:hover:bg-slate-600"
+                  >
+                    <span>🏷️ {tag.displayName}</span>
+                    <span className="text-xs text-slate-500 dark:text-slate-400">
+                      {tag.usageCount}
+                    </span>
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
         </div>
 
         {/* Source Filter */}
