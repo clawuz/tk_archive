@@ -1,5 +1,15 @@
 {
   "projects": {
     "default": "tk-archive-cd9d0"
-  }
+  },
+  "targets": {
+    "tk-archive-cd9d0": {
+      "hosting": {
+        "main": [
+          "tribal-tk-archive"
+        ]
+      }
+    }
+  },
+  "etags": {}
 }
