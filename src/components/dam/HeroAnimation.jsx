@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import kingbirdSide from '../../assets/kingbird-side.png'
+import tribalLogo from '../../assets/tribal-logo.svg'
 
 const NAVY = '#0A1E42'
 
@@ -121,6 +122,15 @@ export default function HeroAnimation({ height = 140 }) {
           }}
         />
       ))}
+
+      {/* Tribal logo — right side, vertically centered, clear of both the
+          title (bottom-left) and the flight path (upper band) */}
+      <img
+        src={tribalLogo}
+        alt="Tribal Worldwide Istanbul"
+        className="absolute right-6 top-1/2 -translate-y-1/2 pointer-events-none"
+        style={{ height: 40, width: 'auto', opacity: 0.85 }}
+      />
 
       {/* Title — pinned to the bottom so the flight path above never crosses it */}
       <div className="absolute left-6 bottom-4 pointer-events-none">
