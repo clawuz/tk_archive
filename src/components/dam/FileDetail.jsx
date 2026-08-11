@@ -87,6 +87,13 @@ export default function FileDetail({
   const [selectedFrameIndex, setSelectedFrameIndex] = useState(0)
   const isVideoFile = !!file.mimeType?.startsWith('video/')
   const hasVideoFrames = file.videoPreviewFrames?.length > 0
+  // Google Drive's embedded player has fixed-size controls that don't
+  // scale down, so it needs real width to be usable — this narrow sidebar
+  // never has that. Drive videos get a clickable poster here instead of
+  // the live iframe; actual playback happens in the lightbox (max-w-4xl,
+  // unconstrained by this grid column). Local videos keep the inline
+  // player — the browser's native controls scale fine at any width.
+  const isDriveVideo = isVideoFile && file.source === 'drive'
 
   // Reset local tags when the selected file changes
   useEffect(() => {
@@ -207,13 +214,14 @@ export default function FileDetail({
 
       {/* Content */}
       <div className="flex-1 overflow-y-auto p-4 space-y-6">
-        {/* Preview Thumbnail — skipped for videos with no extracted frames:
-            the actual <video> player below is already the preview then, and
-            stacking a second, often dark/unhelpful static thumbnail box
-            directly above it just reads as a broken video area. Videos with
-            extracted frames still get the hero+filmstrip picker; non-video
-            files always get the plain thumbnail (their only preview). */}
-        {(!isVideoFile || hasVideoFrames) && (
+        {/* Preview Thumbnail — skipped only for local videos with no
+            extracted frames: the inline <video> player below is already
+            the preview there, and stacking a second static thumbnail above
+            it just reads as a broken video area. Drive videos always get
+            this clickable poster (with frames if any exist) instead of the
+            live iframe — see isDriveVideo above — non-video files always
+            get the plain thumbnail (their only preview). */}
+        {(!isVideoFile || hasVideoFrames || isDriveVideo) && (
           <div>
             <div
               className="relative w-full aspect-video bg-gradient-to-br from-slate-100 to-slate-200 dark:from-slate-700 dark:to-slate-600 rounded-lg overflow-hidden cursor-pointer hover:opacity-75 transition group"
@@ -228,14 +236,26 @@ export default function FileDetail({
                 alt={file.name}
                 className="w-full h-full object-cover"
               />
-              <div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition bg-black/20">
-                <svg
-                  className="w-8 h-8 text-white"
-                  fill="currentColor"
-                  viewBox="0 0 20 20"
-                >
-                  <path d="M10 12a2 2 0 100-4 2 2 0 000 4z" />
-                </svg>
+              <div
+                className={`absolute inset-0 flex items-center justify-center transition bg-black/20 ${
+                  isVideoFile ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'
+                }`}
+              >
+                {isVideoFile ? (
+                  <span className="w-14 h-14 rounded-full bg-white/90 flex items-center justify-center shadow-lg group-hover:scale-105 transition">
+                    <svg className="w-6 h-6 text-slate-900 ml-1" fill="currentColor" viewBox="0 0 20 20">
+                      <path d="M6 4l12 6-12 6V4z" />
+                    </svg>
+                  </span>
+                ) : (
+                  <svg
+                    className="w-8 h-8 text-white"
+                    fill="currentColor"
+                    viewBox="0 0 20 20"
+                  >
+                    <path d="M10 12a2 2 0 100-4 2 2 0 000 4z" />
+                  </svg>
+                )}
               </div>
             </div>
 
@@ -268,8 +288,10 @@ export default function FileDetail({
           </div>
         )}
 
-        {/* Video Preview Player */}
-        <VideoPreview file={file} />
+        {/* Video Preview Player — Drive videos are click-to-play via the
+            poster above (opens the lightbox) instead of an inline player;
+            see isDriveVideo above. */}
+        {!isDriveVideo && <VideoPreview file={file} />}
 
         {/* Folder Navigation Breadcrumb */}
         <FolderBrowser file={file} onNavigate={handleFolderNavigate} />

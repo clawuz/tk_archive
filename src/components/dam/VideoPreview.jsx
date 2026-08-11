@@ -53,11 +53,12 @@ export default function VideoPreview({ file }) {
       : DEFAULT_ASPECT_RATIO;
 
   return (
-    // max-w-md caps how wide (and, via aspect-ratio, how tall) the box can
-    // grow even in the wider column a video detail view gets — otherwise a
-    // portrait video in a wide column would scale to an enormous height.
-    // Below that cap the box still shrinks to fit narrower containers.
-    <div className="bg-black rounded-lg overflow-hidden mb-4 max-w-md mx-auto">
+    // Width comes entirely from the surrounding layout: the narrow
+    // FileDetail sidebar for local videos (native controls scale fine at
+    // any width), or the lightbox's max-w-4xl for Drive videos (routed
+    // there instead of rendering inline — see isDriveVideo in
+    // FileDetail.jsx, since Drive's embedded controls need real width).
+    <div className="bg-black rounded-lg overflow-hidden mb-4">
       {error ? (
         <div className="h-96 flex items-center justify-center bg-slate-100 dark:bg-slate-900 text-slate-900 dark:text-white">
           <div className="text-center">
@@ -72,11 +73,23 @@ export default function VideoPreview({ file }) {
         // letterboxed with cut-off controls. file.videoWidth/videoHeight
         // come from Drive's own metadata (scannerDrive.cjs), no download
         // needed, so the box always matches the actual video shape.
-        <div className="w-full" style={{ aspectRatio: driveAspectRatio }}>
+        // This only ever renders inside the lightbox now (see isDriveVideo
+        // in FileDetail.jsx) — a portrait video at the lightbox's full
+        // width would compute a height taller than the viewport, so both
+        // width and height are 'auto' with max-width/max-height caps: the
+        // browser picks whichever dimension is actually the constraint,
+        // the same sizing behavior as object-fit: contain.
+        <div className="w-full flex justify-center">
           <iframe
             src={streamUrl}
             title={file.name}
-            className="w-full h-full"
+            style={{
+              aspectRatio: driveAspectRatio,
+              width: 'auto',
+              height: 'auto',
+              maxWidth: '100%',
+              maxHeight: '80vh',
+            }}
             allowFullScreen
           />
         </div>
