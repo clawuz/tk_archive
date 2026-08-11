@@ -110,7 +110,7 @@ async function scanDriveFolder(drive, folderId, scanId, folderPath = [], depth =
       const result = await drive.files.list({
         q: `'${folderId}' in parents and trashed=false`,
         spaces: 'drive',
-        fields: 'nextPageToken, files(id, name, mimeType, size, createdTime, modifiedTime, webViewLink, thumbnailLink)',
+        fields: 'nextPageToken, files(id, name, mimeType, size, createdTime, modifiedTime, webViewLink, thumbnailLink, videoMediaMetadata)',
         pageSize: 100,
         pageToken: pageToken
       });
@@ -159,6 +159,11 @@ async function scanDriveFolder(drive, folderId, scanId, folderPath = [], depth =
           // preserve step below carries forward videoPreviewFrames from an
           // existing doc if an earlier one-off pass put any there.
           videoPreviewFrames: null,
+          // Real dimensions from Drive's own metadata (no download — see the
+          // comment near VIDEO scanning above) so the player UI can size its
+          // box to the video's actual orientation instead of assuming 16:9.
+          videoWidth: file.videoMediaMetadata?.width || null,
+          videoHeight: file.videoMediaMetadata?.height || null,
           // Flag for the server-side Claude Vision tagging function
           // (functions/tagNewFiles.js) — same as scanner.cjs's local files.
           needs_tagging: !!file.thumbnailLink,

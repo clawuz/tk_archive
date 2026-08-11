@@ -1,10 +1,21 @@
 import { useState, useEffect } from 'react';
 import { canStream, getStreamUrl, getFileSize, isFileTooLarge } from '../../services/streamingService';
 
+// Falls back to 16:9 only when the real orientation isn't known yet (older
+// Drive scans predating videoWidth/videoHeight, or a local file before its
+// <video> element has reported loadedmetadata) — never a fixed guess once
+// the real dimensions are available.
+const DEFAULT_ASPECT_RATIO = '16 / 9';
+
 export default function VideoPreview({ file }) {
   const [canPreview, setCanPreview] = useState(false);
   const [streamUrl, setStreamUrl] = useState(null);
   const [error, setError] = useState(null);
+  // Local files: the real orientation is only known once the browser's own
+  // <video> element loads metadata, since we never probe local files ahead
+  // of time. Drive files know it upfront from file.videoWidth/videoHeight
+  // (Drive's own metadata, fetched at scan time — see scannerDrive.cjs).
+  const [localAspectRatio, setLocalAspectRatio] = useState(DEFAULT_ASPECT_RATIO);
 
   useEffect(() => {
     if (!file) return;
@@ -27,6 +38,7 @@ export default function VideoPreview({ file }) {
       setStreamUrl(url);
       setCanPreview(true);
       setError(null);
+      setLocalAspectRatio(DEFAULT_ASPECT_RATIO);
     } catch (err) {
       setError('Unable to preview this video');
       console.error('VideoPreview error:', err);
@@ -34,6 +46,11 @@ export default function VideoPreview({ file }) {
   }, [file]);
 
   if (!file || (!canPreview && !error)) return null;
+
+  const driveAspectRatio =
+    file.videoWidth && file.videoHeight
+      ? `${file.videoWidth} / ${file.videoHeight}`
+      : DEFAULT_ASPECT_RATIO;
 
   return (
     <div className="bg-black rounded-lg overflow-hidden mb-4">
@@ -45,13 +62,13 @@ export default function VideoPreview({ file }) {
           </div>
         </div>
       ) : file.source === 'drive' ? (
-        // Google Drive's own embeddable viewer assumes a 16:9 landscape
-        // frame for its own header/controls chrome — a fixed pixel height
-        // (independent of the panel's width) made that chrome render taller
-        // than wide in a narrow sidebar, cutting off its right-side controls.
-        // aspect-video keeps the box itself 16:9 at any panel width, so
-        // Drive's UI always gets a properly proportioned frame to lay out in.
-        <div className="w-full aspect-video">
+        // Google Drive's own embeddable viewer lays out its header/controls
+        // chrome assuming the box matches the video's real orientation — a
+        // portrait (9:16-ish) video squeezed into a 16:9 box came out
+        // letterboxed with cut-off controls. file.videoWidth/videoHeight
+        // come from Drive's own metadata (scannerDrive.cjs), no download
+        // needed, so the box always matches the actual video shape.
+        <div className="w-full" style={{ aspectRatio: driveAspectRatio }}>
           <iframe
             src={streamUrl}
             title={file.name}
@@ -61,11 +78,19 @@ export default function VideoPreview({ file }) {
         </div>
       ) : (
         // Local file, served from our Cloud Storage bucket (streamingService.ts).
+        // Real orientation isn't known until the browser reports it via
+        // onLoadedMetadata, so the box starts at 16:9 and corrects itself
+        // once the video's actual dimensions are available.
         <video
           src={streamUrl}
           controls
-          className="w-full aspect-video bg-black"
+          className="w-full bg-black"
+          style={{ aspectRatio: localAspectRatio }}
           controlsList="nodownload"
+          onLoadedMetadata={(e) => {
+            const { videoWidth, videoHeight } = e.currentTarget;
+            if (videoWidth && videoHeight) setLocalAspectRatio(`${videoWidth} / ${videoHeight}`);
+          }}
           onError={() => setError('Video oynatılamadı. Dosya bozuk olabilir veya tarayıcı bu codec\'i desteklemiyor olabilir.')}
         />
       )}
