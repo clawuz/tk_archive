@@ -45,19 +45,26 @@ export default function VideoPreview({ file }) {
           </div>
         </div>
       ) : file.source === 'drive' ? (
-        // Google Drive's own embeddable viewer — no download/re-upload.
-        <iframe
-          src={streamUrl}
-          title={file.name}
-          className="w-full h-96"
-          allowFullScreen
-        />
+        // Google Drive's own embeddable viewer assumes a 16:9 landscape
+        // frame for its own header/controls chrome — a fixed pixel height
+        // (independent of the panel's width) made that chrome render taller
+        // than wide in a narrow sidebar, cutting off its right-side controls.
+        // aspect-video keeps the box itself 16:9 at any panel width, so
+        // Drive's UI always gets a properly proportioned frame to lay out in.
+        <div className="w-full aspect-video">
+          <iframe
+            src={streamUrl}
+            title={file.name}
+            className="w-full h-full"
+            allowFullScreen
+          />
+        </div>
       ) : (
         // Local file, served from our Cloud Storage bucket (streamingService.ts).
         <video
           src={streamUrl}
           controls
-          className="w-full h-96 bg-black"
+          className="w-full aspect-video bg-black"
           controlsList="nodownload"
           onError={() => setError('Video oynatılamadı. Dosya bozuk olabilir veya tarayıcı bu codec\'i desteklemiyor olabilir.')}
         />
