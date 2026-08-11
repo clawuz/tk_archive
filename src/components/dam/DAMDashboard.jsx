@@ -333,6 +333,13 @@ export default function DAMDashboard() {
 // Scan Control Panel — status card, start-scan controls, recent scans
 // ============================================================================
 
+// Completed-scan card idles by alternating the THY globe animation with the
+// stats view instead of leaving stats up forever. GLOBE_MS matches
+// GlobeLoader's own loop point (TL.loopAt in GlobeLoader.jsx) exactly, so
+// each play always finishes its loop before the card switches away.
+const GLOBE_PHASE_MS = 48200
+const STATS_PHASE_MS = 15000
+
 const SCAN_STATUS_STYLES = {
   running: {
     label: '⏳ Çalışıyor',
@@ -537,6 +544,39 @@ function ScanControlPanel({
 }
 
 function ScanStatusCard({ scan }) {
+  // Completed scans idle by alternating globe → stats → globe... (rather
+  // than a globe that only ever plays once) so the card stays a little
+  // alive without stealing attention from a scan that's actually running.
+  const [completedPhase, setCompletedPhase] = useState('globe')
+
+  useEffect(() => {
+    if (scan?.status !== 'completed') return
+
+    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+      setCompletedPhase('stats')
+      return
+    }
+
+    setCompletedPhase('globe')
+    let cancelled = false
+    let timeoutId
+    function scheduleNext(currentPhase) {
+      const duration = currentPhase === 'globe' ? GLOBE_PHASE_MS : STATS_PHASE_MS
+      timeoutId = setTimeout(() => {
+        if (cancelled) return
+        const nextPhase = currentPhase === 'globe' ? 'stats' : 'globe'
+        setCompletedPhase(nextPhase)
+        scheduleNext(nextPhase)
+      }, duration)
+    }
+    scheduleNext('globe')
+
+    return () => {
+      cancelled = true
+      clearTimeout(timeoutId)
+    }
+  }, [scan?.status, scan?.scanId])
+
   if (!scan) {
     return (
       <div className="h-full flex flex-col justify-center text-sm text-slate-500 dark:text-slate-400 border border-dashed border-slate-300 dark:border-slate-600 rounded-lg p-4">
@@ -579,25 +619,33 @@ function ScanStatusCard({ scan }) {
       )}
 
       {scan.status === 'completed' && scan.results && (
-        <div className="mt-3 grid grid-cols-2 gap-2 text-xs">
-          <div className="bg-slate-50 dark:bg-slate-700/50 rounded p-2">
-            <div className="font-semibold text-slate-900 dark:text-white">
-              {scan.results.totalFiles}
+        completedPhase === 'globe' ? (
+          <div className="mt-3">
+            <div className="w-full h-36 rounded-lg overflow-hidden border border-slate-200 dark:border-slate-700">
+              <GlobeLoader />
             </div>
-            <div className="text-slate-500 dark:text-slate-400">Toplam dosya</div>
           </div>
-          <div className="bg-green-50 dark:bg-green-900/20 rounded p-2">
-            <div className="font-semibold text-green-800 dark:text-green-300">
-              +{scan.results.newFiles}
+        ) : (
+          <div className="mt-3 grid grid-cols-2 gap-2 text-xs">
+            <div className="bg-slate-50 dark:bg-slate-700/50 rounded p-2">
+              <div className="font-semibold text-slate-900 dark:text-white">
+                {scan.results.totalFiles}
+              </div>
+              <div className="text-slate-500 dark:text-slate-400">Toplam dosya</div>
             </div>
-            <div className="text-green-700 dark:text-green-400">Yeni dosya</div>
+            <div className="bg-green-50 dark:bg-green-900/20 rounded p-2">
+              <div className="font-semibold text-green-800 dark:text-green-300">
+                +{scan.results.newFiles}
+              </div>
+              <div className="text-green-700 dark:text-green-400">Yeni dosya</div>
+            </div>
+            {duration && (
+              <div className="col-span-2 text-slate-500 dark:text-slate-400">
+                Süre: {duration}
+              </div>
+            )}
           </div>
-          {duration && (
-            <div className="col-span-2 text-slate-500 dark:text-slate-400">
-              Süre: {duration}
-            </div>
-          )}
-        </div>
+        )
       )}
 
       {scan.status === 'failed' && (
