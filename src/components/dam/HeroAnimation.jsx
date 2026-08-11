@@ -129,7 +129,7 @@ export default function HeroAnimation({ height = 140 }) {
         src={tribalLogo}
         alt="Tribal Worldwide Istanbul"
         className="absolute right-6 top-1/2 -translate-y-1/2 pointer-events-none"
-        style={{ height: 40, width: 'auto', opacity: 0.85 }}
+        style={{ height: 80, width: 'auto', opacity: 0.85 }}
       />
 
       {/* Title — pinned to the bottom so the flight path above never crosses it */}
