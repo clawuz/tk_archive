@@ -263,8 +263,16 @@ export default function DAMDashboard() {
           <ScanTimeline scans={scanHistory} />
         </div>
 
-        {/* Center: File Gallery — widens to reclaim the detail panel's column when it's closed */}
-        <div className={showDetail && selectedFile ? 'lg:col-span-2' : 'lg:col-span-3'}>
+        {/* Center: File Gallery — widens to reclaim the detail panel's column
+            when it's closed, and yields an extra column to the detail panel
+            for videos (Google Drive's embedded player has fixed-size
+            controls that don't scale down, so a single narrow column isn't
+            wide enough for them to render usably) */}
+        <div className={
+          showDetail && selectedFile
+            ? (selectedFile.mimeType?.startsWith('video/') ? 'lg:col-span-1' : 'lg:col-span-2')
+            : 'lg:col-span-3'
+        }>
           {error && (
             <div className="mb-4 p-4 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg">
               <p className="text-sm text-red-800 dark:text-red-200">{error}</p>
@@ -307,7 +315,7 @@ export default function DAMDashboard() {
 
         {/* Right Sidebar: File Detail */}
         {showDetail && selectedFile && (
-          <div className="lg:col-span-1">
+          <div className={selectedFile.mimeType?.startsWith('video/') ? 'lg:col-span-2' : 'lg:col-span-1'}>
             <FileDetail
               file={selectedFile}
               onClose={() => setShowDetail(false)}

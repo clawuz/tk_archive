@@ -53,7 +53,11 @@ export default function VideoPreview({ file }) {
       : DEFAULT_ASPECT_RATIO;
 
   return (
-    <div className="bg-black rounded-lg overflow-hidden mb-4">
+    // max-w-md caps how wide (and, via aspect-ratio, how tall) the box can
+    // grow even in the wider column a video detail view gets — otherwise a
+    // portrait video in a wide column would scale to an enormous height.
+    // Below that cap the box still shrinks to fit narrower containers.
+    <div className="bg-black rounded-lg overflow-hidden mb-4 max-w-md mx-auto">
       {error ? (
         <div className="h-96 flex items-center justify-center bg-slate-100 dark:bg-slate-900 text-slate-900 dark:text-white">
           <div className="text-center">
