@@ -39,6 +39,13 @@ export default function DAMDashboard() {
   const [fileCounts, setFileCounts] = useState({ total: 0, local: 0, drive: 0 })
   const cursorRef = useRef(null)
   const rawExhaustedRef = useRef(false)
+  // Bumped at the start of every loadFiles() call; fetchUntil's caller
+  // compares its own snapshot against the live value once the (possibly
+  // slow) fetch resolves, and discards the result if a newer search has
+  // since started. Without this, typing fast fires overlapping searches
+  // and whichever happens to resolve last wins — not necessarily the most
+  // recent one — visible as results flashing correct then reverting.
+  const requestIdRef = useRef(0)
   const [filters, setFilters] = useState({
     query: '',
     sources: ['local', 'drive'],
@@ -91,36 +98,44 @@ export default function DAMDashboard() {
   }
 
   // Fetches raw batches from Firestore (via damService.searchFiles) — each
-  // batch is filtered client-side before being appended — until `buffer` has
-  // at least `minCount` files or there are no more raw documents left.
-  async function fetchUntil(minCount, buffer) {
+  // batch is filtered client-side before being appended — until the buffer
+  // has at least `minCount` files or there are no more raw documents left.
+  // Cursor/exhausted are threaded through as plain values, not shared refs,
+  // so two overlapping calls (e.g. from fast typing) never read or clobber
+  // each other's pagination state mid-flight.
+  async function fetchUntil(minCount, buffer, startCursor, startExhausted) {
     let acc = buffer
-    while (acc.length < minCount && !rawExhaustedRef.current) {
-      const result = await damService.searchFiles(filters, cursorRef.current, FETCH_BATCH_SIZE)
-      cursorRef.current = result.lastDoc
-      if (result.rawCount < FETCH_BATCH_SIZE) rawExhaustedRef.current = true
+    let cursor = startCursor
+    let exhausted = startExhausted
+    while (acc.length < minCount && !exhausted) {
+      const result = await damService.searchFiles(filters, cursor, FETCH_BATCH_SIZE)
+      cursor = result.lastDoc
+      if (result.rawCount < FETCH_BATCH_SIZE) exhausted = true
       if (result.rawCount === 0) break
       acc = [...acc, ...result.files]
     }
-    return acc
+    return { files: acc, cursor, exhausted }
   }
 
   // Resets the pagination cursor/buffer and loads the first page (plus one
   // page ahead, so "hasNextPage" is known without an extra round trip).
   async function loadFiles() {
-    cursorRef.current = null
-    rawExhaustedRef.current = false
+    const myRequestId = ++requestIdRef.current
     setPageIndex(0)
     setLoading(true)
     try {
-      const buffer = await fetchUntil(PAGE_SIZE * 2, [])
+      const { files: buffer, cursor, exhausted } = await fetchUntil(PAGE_SIZE * 2, [], null, false)
+      if (myRequestId !== requestIdRef.current) return // a newer search started meanwhile — discard
+      cursorRef.current = cursor
+      rawExhaustedRef.current = exhausted
       setLoadedFiles(buffer)
       setError(null)
     } catch (err) {
+      if (myRequestId !== requestIdRef.current) return
       setError(err.message || 'Dosyalar yüklenemedi')
       console.error(err)
     } finally {
-      setLoading(false)
+      if (myRequestId === requestIdRef.current) setLoading(false)
     }
   }
 
@@ -129,14 +144,19 @@ export default function DAMDashboard() {
   async function ensurePage(targetPageIndex) {
     const needed = (targetPageIndex + 2) * PAGE_SIZE
     if (loadedFiles.length >= needed || rawExhaustedRef.current) return
+    const myRequestId = requestIdRef.current // paginating the current search, not starting a new one — still discard if a new search supersedes it
     setPageLoading(true)
     try {
-      const buffer = await fetchUntil(needed, loadedFiles)
+      const { files: buffer, cursor, exhausted } = await fetchUntil(needed, loadedFiles, cursorRef.current, rawExhaustedRef.current)
+      if (myRequestId !== requestIdRef.current) return
+      cursorRef.current = cursor
+      rawExhaustedRef.current = exhausted
       setLoadedFiles(buffer)
     } catch (err) {
+      if (myRequestId !== requestIdRef.current) return
       console.error('Sonraki sayfa yüklenemedi:', err)
     } finally {
-      setPageLoading(false)
+      if (myRequestId === requestIdRef.current) setPageLoading(false)
     }
   }
 

@@ -1,9 +1,12 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import damService from '../../services/damService'
+
+const SEARCH_DEBOUNCE_MS = 350
 
 export default function SearchFilters({ filters, onChange }) {
   const [tags, setTags] = useState([])
   const [searchQuery, setSearchQuery] = useState(filters.query || '')
+  const searchDebounceRef = useRef(null)
   const [selectedSources, setSelectedSources] = useState(filters.sources || ['local', 'drive'])
   const [selectedTags, setSelectedTags] = useState(filters.tags || [])
   const [dateFrom, setDateFrom] = useState(
@@ -27,6 +30,12 @@ export default function SearchFilters({ filters, onChange }) {
     loadTags()
   }, [])
 
+  useEffect(() => {
+    return () => {
+      if (searchDebounceRef.current) clearTimeout(searchDebounceRef.current)
+    }
+  }, [])
+
   async function loadTags() {
     try {
       const tagList = await damService.getTags()
@@ -36,9 +45,18 @@ export default function SearchFilters({ filters, onChange }) {
     }
   }
 
+  // The input updates immediately (feels responsive), but the actual query
+  // — which now fires a real Firestore request per change, unlike the old
+  // slow client-side scan — waits until typing pauses. Without this, each
+  // keystroke started its own search, and DAMDashboard.jsx had to guard
+  // against them resolving out of order (see requestIdRef there); debouncing
+  // here means that mostly doesn't even come up in normal typing.
   function handleSearchChange(value) {
     setSearchQuery(value)
-    onChange({ query: value })
+    if (searchDebounceRef.current) clearTimeout(searchDebounceRef.current)
+    searchDebounceRef.current = setTimeout(() => {
+      onChange({ query: value })
+    }, SEARCH_DEBOUNCE_MS)
   }
 
   function handleSourceToggle(source) {
@@ -62,6 +80,9 @@ export default function SearchFilters({ filters, onChange }) {
   // scan every raw document client-side to find matches — much slower for
   // an uncommon term. The text box clears so the two don't stack.
   function handleSelectTagSuggestion(tagId) {
+    // A pending debounce from the typing that surfaced this suggestion
+    // would otherwise fire ~350ms later and overwrite the clear below.
+    if (searchDebounceRef.current) clearTimeout(searchDebounceRef.current)
     handleTagToggle(tagId)
     setSearchQuery('')
     onChange({ query: '' })
@@ -125,6 +146,7 @@ export default function SearchFilters({ filters, onChange }) {
   }
 
   function handleClearFilters() {
+    if (searchDebounceRef.current) clearTimeout(searchDebounceRef.current)
     setSearchQuery('')
     setSelectedSources(['local', 'drive'])
     setSelectedTags([])
