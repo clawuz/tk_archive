@@ -10,6 +10,7 @@ const path = require('path');
 const { google } = require('googleapis');
 const admin = require('firebase-admin');
 const { extractAutoTags } = require('./lib/autoTags.cjs');
+const { generateSearchTokens } = require('./lib/searchTokens.cjs');
 
 console.log('📦 Loading firebase-admin...');
 const serviceAccount = JSON.parse(
@@ -129,7 +130,7 @@ async function scanDriveFolder(drive, folderId, scanId, folderPath = [], depth =
 
         const resolvedMimeType = await getMimeType(file.mimeType);
         const extension = file.name.split('.').pop() || '';
-
+        const autoTags = extractAutoTags([...folderPath, file.name]);
 
         const fileDoc = {
           fileId: file.id,
@@ -141,7 +142,11 @@ async function scanDriveFolder(drive, folderId, scanId, folderPath = [], depth =
           type: file.mimeType,
           size: parseInt(file.size) || 0,
           hash: `drive:${file.id}`, // Google Drive IDs as hash
-          tags: extractAutoTags([...folderPath, file.name]),
+          tags: autoTags,
+          // Precomputed prefixes of every word in the name/tags, so the
+          // free-text search box can use a fast array-contains query
+          // instead of scanning every raw document — see lib/searchTokens.cjs.
+          searchTokens: generateSearchTokens(file.name, autoTags),
           createdAt: new Date(file.createdTime).getTime(),
           modifiedAt: new Date(file.modifiedTime).getTime(),
           uploadedAt: Date.now(),
@@ -251,6 +256,10 @@ async function run() {
       for (const field of PRESERVE_FIELDS) {
         if (existing[field] !== undefined) file[field] = existing[field];
       }
+      // Preserving may have swapped in curated tags (manually added after
+      // the auto-tag pass) — recompute searchTokens from whichever tags
+      // actually ended up on the file, not the pre-preserve auto tags.
+      file.searchTokens = generateSearchTokens(file.name, file.tags);
     }
     console.log(`  Preserved curation on ${existingByFileId.size} already-scanned files\n`);
 

@@ -39,6 +39,32 @@ const CHANGES_COLLECTION = 'changes'
 const TAGS_COLLECTION = 'tags'
 
 /**
+ * Mirrors lib/searchTokens.cjs (the scanners' copy) — every prefix of every
+ * word in the name/tags, so free-text search can use a fast array-contains
+ * query instead of scanning every raw document. Kept in sync with tags here
+ * (see addTagsToFile/removeTagFromFile) rather than only at scan time, so a
+ * tag added through the UI is searchable immediately, not just after a rescan.
+ */
+function generateSearchTokens(name: string, tags: string[]): string[] {
+  const words = new Set<string>()
+  const addWords = (str: string) => {
+    for (const w of (str || '').toLowerCase().split(/[^a-z0-9çğıöşüâîû]+/i)) {
+      if (w.length >= 2) words.add(w)
+    }
+  }
+  addWords(name)
+  for (const t of tags || []) addWords(t.replace(/-/g, ' '))
+
+  const tokens = new Set<string>()
+  for (const w of words) {
+    for (let i = 2; i <= w.length; i++) {
+      tokens.add(w.slice(0, i))
+    }
+  }
+  return Array.from(tokens)
+}
+
+/**
  * Format file size for display
  */
 function formatFileSize(bytes: number): string {
@@ -123,13 +149,26 @@ export async function searchFiles(
 }> {
   const queryConstraints = []
 
+  // Firestore allows only one array-contains(-any) clause per query, so tags
+  // wins when both a tag filter and free text are active — the text is still
+  // applied as a post-filter below, just against a smaller, already-narrowed
+  // candidate set instead of the whole collection.
   if (filters.tags && filters.tags.length > 0) {
     queryConstraints.push(where('tags', 'array-contains-any', filters.tags))
+  } else if (filters.query && filters.query.trim().length >= 2) {
+    // searchTokens holds every prefix of every word in the name/tags (see
+    // generateSearchTokens above) — array-contains on the query's first word
+    // turns free-text search into a real indexed query instead of scanning
+    // every raw document, which is what made rare-term search slow before.
+    // Later words in a multi-word query are still checked in the post-filter
+    // below for full correctness.
+    const firstWord = filters.query.trim().toLowerCase().split(/\s+/)[0]
+    queryConstraints.push(where('searchTokens', 'array-contains', firstWord))
   }
 
-  // Note: sources/query/licenseType/dateRange are post-filtered below (not
-  // query constraints) so they combine freely without a composite index for
-  // every field/filter pairing.
+  // Note: sources/licenseType/dateRange are post-filtered below (not query
+  // constraints) so they combine freely without a composite index for every
+  // field/filter pairing.
 
   const sortField = filters.sortBy || 'modifiedAt'
   const sortDirection = filters.sortOrder === 'asc' ? 'asc' : 'desc'
@@ -306,8 +345,11 @@ export async function addTagsToFile(fileId: string, tags: string[]): Promise<voi
     if (file) {
       const newTags = tags.filter((t) => !file.tags.includes(t))
       if (newTags.length === 0) return
-      const updated = new Set([...file.tags, ...newTags])
-      await updateFile(fileId, { tags: Array.from(updated) })
+      const updatedTags = Array.from(new Set([...file.tags, ...newTags]))
+      await updateFile(fileId, {
+        tags: updatedTags,
+        searchTokens: generateSearchTokens(file.name, updatedTags),
+      })
       await Promise.all(newTags.map((t) => bumpTagUsage(t, 1)))
     }
   } catch (error) {
@@ -325,7 +367,10 @@ export async function removeTagFromFile(fileId: string, tag: string): Promise<vo
     if (file) {
       const updated = file.tags.filter((t) => t !== tag)
       if (updated.length === file.tags.length) return
-      await updateFile(fileId, { tags: updated })
+      await updateFile(fileId, {
+        tags: updated,
+        searchTokens: generateSearchTokens(file.name, updated),
+      })
       await bumpTagUsage(tag, -1)
     }
   } catch (error) {

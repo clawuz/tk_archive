@@ -13,6 +13,7 @@ const { execFile } = require('child_process');
 const { promisify } = require('util');
 const { extractAutoTags } = require('./lib/autoTags.cjs');
 const { isVideoFile, extractVideoFrames } = require('./lib/videoFrames.cjs');
+const { generateSearchTokens } = require('./lib/searchTokens.cjs');
 
 const execFilePromise = promisify(execFile);
 
@@ -131,6 +132,8 @@ async function scanDirectory(dirPath, scanId) {
             }
           }
 
+          const autoTags = extractAutoTags(path.relative(ARCHIVE_ROOT, fullPath).split(path.sep));
+
           const fileDoc = {
             fileId,
             name: entry.name,
@@ -141,7 +144,11 @@ async function scanDirectory(dirPath, scanId) {
             type: mimeType,
             size: stat.size,
             hash,
-            tags: extractAutoTags(path.relative(ARCHIVE_ROOT, fullPath).split(path.sep)),
+            tags: autoTags,
+            // Precomputed prefixes of every word in the name/tags, so the
+            // free-text search box can use a fast array-contains query
+            // instead of scanning every raw document — see lib/searchTokens.cjs.
+            searchTokens: generateSearchTokens(entry.name, autoTags),
             videoPreviewFrames: videoPreviewFrames || null,
             thumbnail: thumbnail || null,
             // Flag for the server-side Claude Vision tagging function
@@ -302,6 +309,10 @@ async function run() {
       for (const field of PRESERVE_FIELDS) {
         if (existing[field] !== undefined) file[field] = existing[field];
       }
+      // Preserving may have swapped in curated tags (manually added after
+      // the auto-tag pass) — recompute searchTokens from whichever tags
+      // actually ended up on the file, not the pre-preserve auto tags.
+      file.searchTokens = generateSearchTokens(file.name, file.tags);
     }
     console.log(`  Preserved curation on ${existingByFileId.size} already-scanned files\n`);
 
