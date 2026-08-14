@@ -603,7 +603,7 @@ export default function FileDetail({
                     value={newTag}
                     onChange={(e) => setNewTag(e.target.value)}
                     placeholder="Yeni etiket..."
-                    className="flex-1 px-2 py-1 text-xs bg-slate-50 dark:bg-slate-700 border border-slate-300 dark:border-slate-600 rounded"
+                    className="flex-1 px-2 py-1 text-xs bg-slate-50 dark:bg-slate-700 border border-slate-300 dark:border-slate-600 rounded text-slate-900 dark:text-white"
                     onKeyDown={(e) => {
                       if (e.key === 'Enter') handleAddTag()
                       if (e.key === 'Escape') setAddingTag(false)
