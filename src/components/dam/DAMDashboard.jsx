@@ -249,6 +249,16 @@ export default function DAMDashboard() {
     setShowDetail(true)
   }
 
+  // FileDetail writes tag/rights edits straight to Firestore, but
+  // loadedFiles (the page's own cache) never heard about it — re-selecting
+  // the same file later handed back the pre-edit data. This is FileDetail's
+  // onFileUpdate: patch both the cache and the currently-selected file with
+  // whatever actually changed.
+  function handleFileUpdate(fileId, updates) {
+    setLoadedFiles((prev) => prev.map((f) => (f.fileId === fileId ? { ...f, ...updates } : f)))
+    setSelectedFile((prev) => (prev && prev.fileId === fileId ? { ...prev, ...updates } : prev))
+  }
+
   function handleFilterChange(newFilters) {
     setFilters({ ...filters, ...newFilters })
   }
@@ -346,6 +356,7 @@ export default function DAMDashboard() {
               onClose={() => setShowDetail(false)}
               onOpenLightbox={() => setShowLightbox(true)}
               onShowPreview={() => setShowLightbox(true)}
+              onFileUpdate={handleFileUpdate}
             />
           </div>
         )}

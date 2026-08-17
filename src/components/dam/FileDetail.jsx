@@ -67,6 +67,17 @@ export default function FileDetail({
   onClose,
   onOpenLightbox,
   onShowPreview,
+  // Tag/rights edits below only ever wrote to Firestore and this
+  // component's own local state (localTags/rightsForm) — the parent's
+  // cached file list (loadedFiles in DAMDashboard) never heard about it.
+  // Editing felt fine in the moment (local state matched what you just
+  // did), but re-selecting the same file later — even without a reload —
+  // handed FileDetail the stale cached object again, and its
+  // useEffect([file.fileId]) reset localTags/rightsForm right back to the
+  // pre-edit values. onFileUpdate closes that loop: call it with whatever
+  // changed after every successful write, so the parent's cache — and
+  // anything else reading it — stays correct.
+  onFileUpdate,
 }) {
   const { userProfile } = useAuth()
   // Only admin/super_admin may add/remove tags or edit copyright & license fields.
@@ -134,7 +145,9 @@ export default function FileDetail({
     if (trimmed) {
       try {
         await damService.addTagsToFile(file.fileId, [trimmed])
-        setLocalTags((prev) => (prev.includes(trimmed) ? prev : [...prev, trimmed]))
+        const updatedTags = localTags.includes(trimmed) ? localTags : [...localTags, trimmed]
+        setLocalTags(updatedTags)
+        onFileUpdate?.(file.fileId, { tags: updatedTags })
         setNewTag('')
         setAddingTag(false)
       } catch (err) {
@@ -146,9 +159,11 @@ export default function FileDetail({
   async function handleRemoveTag(tag) {
     if (!canEdit) return
     const prevTags = localTags
-    setLocalTags((prev) => prev.filter((t) => t !== tag))
+    const updatedTags = localTags.filter((t) => t !== tag)
+    setLocalTags(updatedTags)
     try {
       await damService.removeTagFromFile(file.fileId, tag)
+      onFileUpdate?.(file.fileId, { tags: updatedTags })
     } catch (err) {
       console.error('Etiket silinemedi:', err)
       setLocalTags(prevTags)
@@ -160,10 +175,10 @@ export default function FileDetail({
     try {
       setTagging(true)
       setTagError(null)
-      const tags = await yoloService.tagFile(file.fileId)
-      console.log('File tagged with:', tags)
-      // Note: File refresh would normally happen here via parent component callback
-      // For now, just show success message
+      const newTags = await yoloService.tagFile(file.fileId)
+      const updatedTags = Array.from(new Set([...localTags, ...newTags]))
+      setLocalTags(updatedTags)
+      onFileUpdate?.(file.fileId, { tags: updatedTags })
     } catch (err) {
       console.error('Auto-tagging failed:', err)
       setTagError(err.message || 'Otomatik etiketleme başarısız oldu')
@@ -177,16 +192,35 @@ export default function FileDetail({
     setSavingRights(true)
     setRightsError(null)
     try {
+      const expirationDate = rightsForm.expirationDate
+        ? new Date(rightsForm.expirationDate).getTime()
+        : null
       await damService.updateFileRights(file.fileId, {
         owner: rightsForm.owner,
         licenseType: rightsForm.licenseType,
-        expirationDate: rightsForm.expirationDate
-          ? new Date(rightsForm.expirationDate).getTime()
-          : null,
+        expirationDate,
         usageRights: rightsForm.usageRights,
         productionCompany: rightsForm.productionCompany,
         department: rightsForm.department,
         contactPerson: rightsForm.contactPerson,
+      })
+      // Mirrors updateFileRights' own merge logic (damService.ts) so the
+      // parent's cache matches exactly what was actually written.
+      const { expirationDate: _drop, ...licenseWithoutExpiration } = file.license || {}
+      onFileUpdate?.(file.fileId, {
+        copyright: {
+          ...file.copyright,
+          owner: rightsForm.owner,
+          productionCompany: rightsForm.productionCompany,
+          department: rightsForm.department,
+          contactPerson: rightsForm.contactPerson,
+        },
+        license: {
+          ...(expirationDate === null ? licenseWithoutExpiration : file.license),
+          type: rightsForm.licenseType,
+          ...(expirationDate !== null ? { expirationDate } : {}),
+        },
+        usage: { ...file.usage, usage_rights: rightsForm.usageRights },
       })
       setEditingRights(false)
     } catch (err) {
