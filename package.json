@@ -10,7 +10,8 @@
     "preview": "vite preview",
     "deploy": "firebase deploy",
     "scan": "node scanner.cjs",
-    "scan:drive": "node scannerDrive.cjs"
+    "scan:drive": "node scannerDrive.cjs",
+    "scan:local-preview": "node scannerLocalPreview.cjs"
   },
   "dependencies": {
     "d3-geo": "^3.1.1",
