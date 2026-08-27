@@ -40,7 +40,7 @@ function walkVideos(dirPath, acc = []) {
     const fullPath = path.join(dirPath, entry.name);
     if (entry.isDirectory()) {
       walkVideos(fullPath, acc);
-    } else if (entry.isFile() && isVideoFile(fullPath) && !/_preview\.mp4$/i.test(entry.name)) {
+    } else if (entry.isFile() && isVideoFile(fullPath) && !/(_preview\.mp4|\.part\.mp4)$/i.test(entry.name)) {
       acc.push(fullPath);
     }
   }
