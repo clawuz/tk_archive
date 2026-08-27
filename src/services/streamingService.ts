@@ -18,8 +18,11 @@ export function canStream(file: DAMFile): boolean {
 export function getStreamUrl(file: DAMFile): string | null {
   if (!canStream(file)) return null;
 
-  if (file.source === 'drive') {
-    if (!file.driveFileId) return null;
+  // Any file with a driveFileId streams from Drive's embed viewer — this
+  // covers both true Drive-sourced files (source: 'drive') and local files
+  // whose small preview was uploaded to Drive by scannerLocalPreview.cjs
+  // (source: 'local', driveFileId set to the preview's Drive file ID).
+  if (file.driveFileId) {
     return `https://drive.google.com/file/d/${file.driveFileId}/preview`;
   }
 
