@@ -11,21 +11,24 @@ const { createOAuth2Client, getAuthUrl, saveToken } = require('./lib/driveOAuth.
 
 async function main() {
   const oAuth2Client = createOAuth2Client();
-  const redirectUri = new URL(oAuth2Client.redirectUri);
-  const port = Number(redirectUri.port) || 80;
 
-  const authUrl = getAuthUrl(oAuth2Client);
-  console.log('\nOpen this URL in your browser and approve access:\n');
-  console.log(authUrl, '\n');
-  console.log(`Waiting for redirect on ${oAuth2Client.redirectUri} ...`);
-
+  // A Google Cloud Console "Desktop app" OAuth client's redirect_uris is
+  // just `http://localhost` with no fixed port (Google validates loopback
+  // redirects by host, not exact port, for Desktop clients). So we bind an
+  // ephemeral port ourselves, then build the real redirect URI from
+  // whatever port the OS assigns, and use that same URI for both the auth
+  // URL and the token exchange.
+  let redirectUri;
   const code = await new Promise((resolve, reject) => {
     const server = http.createServer((req, res) => {
-      const reqUrl = new URL(req.url, `http://localhost:${port}`);
+      const reqUrl = new URL(req.url, redirectUri);
       const code = reqUrl.searchParams.get('code');
+      const errorParam = reqUrl.searchParams.get('error');
       if (!code) {
         res.writeHead(400);
-        res.end('No code in redirect.');
+        res.end('Authorization failed. You can close this tab.');
+        server.close();
+        reject(new Error(errorParam || 'No code in redirect.'));
         return;
       }
       res.writeHead(200, { 'Content-Type': 'text/plain' });
@@ -34,10 +37,18 @@ async function main() {
       resolve(code);
     });
     server.on('error', reject);
-    server.listen(port);
+    server.listen(0, () => {
+      const assignedPort = server.address().port;
+      redirectUri = `http://localhost:${assignedPort}`;
+
+      const authUrl = getAuthUrl(oAuth2Client, redirectUri);
+      console.log('\nOpen this URL in your browser and approve access:\n');
+      console.log(authUrl, '\n');
+      console.log(`Waiting for redirect on ${redirectUri} ...`);
+    });
   });
 
-  await saveToken(oAuth2Client, code);
+  await saveToken(oAuth2Client, code, redirectUri);
   console.log('\n✅ Saved functions/config/drivePreviewToken.json — future scans will use this token.\n');
 }
 
