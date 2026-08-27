@@ -62,7 +62,17 @@ function calculateHash(filePath) {
 }
 
 function getMimeType(ext) {
-  const map = { mp4: 'video/mp4', mov: 'video/quicktime' };
+  const map = {
+    mp4: 'video/mp4',
+    mov: 'video/quicktime',
+    avi: 'video/x-msvideo',
+    mkv: 'video/x-matroska',
+    webm: 'video/webm',
+    flv: 'video/x-flv',
+    wmv: 'video/x-ms-wmv',
+    mts: 'video/mp2t',
+    m2ts: 'video/mp2t',
+  };
   return map[ext.toLowerCase()] || 'application/octet-stream';
 }
 
