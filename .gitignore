@@ -11,3 +11,4 @@ dist/
 functions/config/
 *serviceAccountKey*.json
 .firebase/
+.worktrees/
