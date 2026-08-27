@@ -47,9 +47,34 @@ path, sharing common libraries but not the video-upload logic.
 
 ## Component 1: Local preview generation
 
-- **Input:** A root directory (the new archive's location, containing
-  year-based subfolders), passed as a CLI argument — no hardcoded default,
-  since this is a one-off archive location distinct from `TK-2026`.
+- **Input:** A list of root directories, read from a config file
+  (`roots.json`, sibling to `scannerLocalPreview.cjs`) rather than a single
+  hardcoded path or CLI argument — the source folders live at unrelated
+  locations under the same SMB share and more will be added over time, so
+  adding a folder should mean editing this file, not the script.
+
+  All roots are on the `TRIBAL` SMB share, mounted locally at
+  `/Volumes/TRIBAL`. Confirmed reachable at design time:
+  ```json
+  {
+    "roots": [
+      "/Volumes/TRIBAL/THY/ACCOUNT/2026/TK_STOCK",
+      "/Volumes/TRIBAL/THY/ACCOUNT/2026/thy stok 2",
+      "/Volumes/TRIBAL/THY/ACCOUNT/2026/tk apron ham görseller",
+      "/Volumes/TRIBAL/2023/THY/YARATICI_EKIP/TurkishAirlines/VIDEO_WORKS",
+      "/Volumes/TRIBAL/THY/CREATIVE/2026/TurkishAirlines/VIDEO_WORKS"
+    ]
+  }
+  ```
+  The first three contain 3,070 video files combined (counted at design
+  time); the last two are large enough that a full recursive count over the
+  network did not complete within 2 minutes — confirming the need for
+  resumable, per-file idempotent processing rather than a single blocking
+  pass.
+  The script scans each root recursively and preserves each file's full
+  original path (root + relative subpath) as its identity — this is what
+  makes the eventual Firestore record traceable back to its exact network
+  location, per the requirement that folder/date/path details matter.
 - **File selection:** Recursive scan for `.mov`/`.mp4` (case-insensitive).
   Files already ending in `_preview.mp4` are excluded from being treated as
   scan targets themselves.
@@ -74,10 +99,17 @@ path, sharing common libraries but not the video-upload logic.
 - **Auth:** Reuses the existing Drive API service-account credentials
   already configured for `scannerDrive.cjs` — no new OAuth setup.
 - **Destination structure:** A dedicated root Drive folder (e.g.
-  `TK Archive Previews/`) mirrors the local archive's year/subfolder
-  structure exactly, e.g. `TK Archive Previews/2023/CampaignX/video_preview.mp4`.
-  Folders are created on demand (checked for existence before creating, to
-  keep the script re-runnable).
+  `TK Archive Previews/`) mirrors each file's full path *relative to the
+  `TRIBAL` share root* (i.e. relative to `/Volumes/TRIBAL`, not relative to
+  its individual configured root) — e.g.
+  `TK Archive Previews/THY/ACCOUNT/2026/TK_STOCK/video_preview.mp4` and
+  `TK Archive Previews/2023/THY/YARATICI_EKIP/TurkishAirlines/VIDEO_WORKS/clip_preview.mp4`.
+  This is deliberate: two of the configured roots both end in
+  `VIDEO_WORKS` (one under `2023/...`, one under `THY/CREATIVE/2026/...`) —
+  mirroring the full share-relative path avoids collisions between them and
+  keeps the Drive structure self-explanatory without needing per-root
+  aliasing. Folders are created on demand (checked for existence before
+  creating, to keep the script re-runnable).
 - **Idempotency:** A preview is only uploaded if the corresponding Firestore
   file document does not already have a `previewDriveFileId`. Re-running the
   script does not re-upload existing previews.
