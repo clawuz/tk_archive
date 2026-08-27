@@ -36,6 +36,17 @@ cost comparison — GCS remains the documented fallback in this project if
 Drive quota becomes unmanageable and the team doesn't want to upgrade the
 plan.
 
+**Correction made during planning:** the 500GB quota is the archive owner's
+*personal* Google account, not a Shared Drive or the existing
+`archive-scanner` service account. That service account (used by
+`scannerDrive.cjs`) is also scoped `drive.readonly` — it cannot upload at
+all, and even with write access, files it creates would count against its
+own (effectively empty) storage, not the owner's personal 500GB. Uploading
+therefore requires a **separate OAuth flow authenticated as the owner's own
+Google account** (one-time interactive consent, `drive.file` scope), not a
+reuse of `scannerDrive.cjs`'s service-account credentials as originally
+assumed.
+
 ## Scope boundary
 
 This design does **not** modify `scanner.cjs`'s existing behavior for the
@@ -96,8 +107,9 @@ path, sharing common libraries but not the video-upload logic.
 
 ## Component 2: Drive upload and folder mirroring
 
-- **Auth:** Reuses the existing Drive API service-account credentials
-  already configured for `scannerDrive.cjs` — no new OAuth setup.
+- **Auth:** A new one-time OAuth flow (Desktop app client, `drive.file`
+  scope) authenticated as the archive owner's own Google account — see
+  correction above. Not a reuse of `scannerDrive.cjs`'s service account.
 - **Destination structure:** A dedicated root Drive folder (e.g.
   `TK Archive Previews/`) mirrors each file's full path *relative to the
   `TRIBAL` share root* (i.e. relative to `/Volumes/TRIBAL`, not relative to
