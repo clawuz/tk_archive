@@ -77,11 +77,20 @@ function getMimeType(ext) {
 }
 
 const logRows = ['path,outcome,timestamp,error'];
+// Rows are appended to disk immediately as each file finishes, not just
+// buffered in memory for the whole ~10,000-file run — a crash, kill, or
+// lost SMB mount partway through would otherwise lose the entire log.
 function logResult(filePath, outcome, error = '') {
   const safePath = filePath.replace(/"/g, '""');
   const safeError = (error || '').replace(/"/g, '""').replace(/\n/g, ' ');
-  logRows.push(`"${safePath}","${outcome}","${new Date().toISOString()}","${safeError}"`);
+  const row = `"${safePath}","${outcome}","${new Date().toISOString()}","${safeError}"`;
+  logRows.push(row);
+  fs.appendFileSync(LOG_PATH, row + '\n');
 }
+
+// Hoisted so the top-level run().catch() handler below can still update the
+// Firestore scan doc if run() throws before returning it.
+let scanRef = null;
 
 async function processFile(fullPath, driveClient, scanId) {
   const fileId = fileIdFor(fullPath);
@@ -165,7 +174,7 @@ async function run() {
   const roots = loadRoots();
   const driveClient = await getDriveClient();
 
-  const scanRef = db.collection('scans').doc();
+  scanRef = db.collection('scans').doc();
   const scanId = scanRef.id;
   await scanRef.set({
     scanId,
@@ -185,9 +194,12 @@ async function run() {
   }
   console.log(`\n📁 Found ${allFiles.length} video files across ${roots.length} roots\n`);
 
+  // Header line written up front; logResult() appends each row incrementally
+  // as files finish, so the CSV is durable on disk throughout the run.
+  fs.writeFileSync(LOG_PATH, logRows[0] + '\n');
+
   await runWithConcurrency(allFiles, CONCURRENCY, (f) => processFile(f, driveClient, scanId));
 
-  fs.writeFileSync(LOG_PATH, logRows.join('\n'));
   console.log(`\n\n📝 Log written to ${LOG_PATH}`);
 
   await scanRef.update({
@@ -200,7 +212,16 @@ async function run() {
   process.exit(0);
 }
 
-run().catch((err) => {
+run().catch(async (err) => {
   console.error('\n❌ Scan failed:', err);
+  if (scanRef) {
+    await scanRef
+      .update({
+        status: 'failed',
+        completedAt: admin.firestore.Timestamp.now(),
+        error: err.message,
+      })
+      .catch(() => {});
+  }
   process.exit(1);
 });

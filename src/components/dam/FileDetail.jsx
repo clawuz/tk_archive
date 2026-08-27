@@ -104,7 +104,7 @@ export default function FileDetail({
   // the live iframe; actual playback happens in the lightbox (max-w-4xl,
   // unconstrained by this grid column). Local videos keep the inline
   // player — the browser's native controls scale fine at any width.
-  const isDriveVideo = isVideoFile && file.source === 'drive'
+  const isDriveVideo = isVideoFile && !!file.driveFileId
 
   // Reset local tags when the selected file changes
   useEffect(() => {

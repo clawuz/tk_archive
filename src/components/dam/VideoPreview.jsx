@@ -27,8 +27,11 @@ export default function VideoPreview({ file }) {
       }
 
       // Drive's own viewer streams the file — our bandwidth is never in the
-      // loop, so the local size cap doesn't apply there.
-      if (file.source !== 'drive' && isFileTooLarge(file.size)) {
+      // loop, so the local size cap doesn't apply there. Gate on driveFileId
+      // (not file.source) since local files with a Drive-hosted preview
+      // (scannerLocalPreview.cjs) also stream from Drive and file.size still
+      // reflects the multi-GB original, not the small preview.
+      if (!file.driveFileId && isFileTooLarge(file.size)) {
         setError(`File too large (${getFileSize(file.size)}). Download to play locally.`);
         setCanPreview(false);
         return;
@@ -46,6 +49,12 @@ export default function VideoPreview({ file }) {
   }, [file]);
 
   if (!file || (!canPreview && !error)) return null;
+
+  // Drive embed vs. local <video> is decided by whether a Drive-hosted
+  // preview exists, not by file.source — local files scanned by
+  // scannerLocalPreview.cjs also have source: 'local' but stream from
+  // Drive's embed viewer via their driveFileId.
+  const isDriveEmbed = !!file.driveFileId;
 
   const driveAspectRatio =
     file.videoWidth && file.videoHeight
@@ -66,7 +75,7 @@ export default function VideoPreview({ file }) {
             <p className="text-sm text-slate-600 dark:text-slate-400">Size: {getFileSize(file.size)}</p>
           </div>
         </div>
-      ) : file.source === 'drive' ? (
+      ) : isDriveEmbed ? (
         // Google Drive's own embeddable viewer lays out its header/controls
         // chrome assuming the box matches the video's real orientation — a
         // portrait (9:16-ish) video squeezed into a 16:9 box came out
