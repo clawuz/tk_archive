@@ -14,3 +14,4 @@ functions/config/
 .worktrees/
 functions/config/driveOAuthClient.json
 functions/config/drivePreviewToken.json
+preview_log.csv
