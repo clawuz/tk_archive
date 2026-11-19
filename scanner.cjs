@@ -13,7 +13,7 @@ const { execFile } = require('child_process');
 const { promisify } = require('util');
 const { extractAutoTags } = require('./lib/autoTags.cjs');
 const { isVideoFile, extractVideoFrames } = require('./lib/videoFrames.cjs');
-const { generateSearchTokens } = require('./lib/searchTokens.cjs');
+const { generateSearchTokens, aiSearchText } = require('./lib/searchTokens.cjs');
 
 const execFilePromise = promisify(execFile);
 
@@ -60,11 +60,58 @@ async function uploadVideoIfNeeded(fullPath, fileId, ext) {
   await bucket.upload(fullPath, { destination: objectName });
 }
 
+// The grid/detail-panel thumbnail (generateThumbnail below) is 240px —
+// fine for a small tile, but stretched into the full-screen lightbox it
+// came out blurry and (before the lightbox sizing fix) cropped. Rather
+// than bump every thumbnail to a size too big to keep inlining as base64
+// in the Firestore doc (1MB document limit), images get the same
+// two-tier treatment video already has: small inline thumbnail for fast
+// grid loading, real pixels fetched from Storage on demand for the big
+// view. Reuses VIDEO_BUCKET under a previews/ prefix rather than standing
+// up a second bucket — same public-read access already configured there,
+// same deterministic-filename convention so the frontend computes the
+// URL (getImagePreviewUrl in streamingService.ts) without a new Firestore
+// field, with graceful fallback to the small thumbnail via onError for
+// any file this hasn't been generated for yet.
+async function uploadImagePreviewIfNeeded(fullPath, fileId) {
+  const objectName = `previews/${fileId}.png`;
+  const bucket = admin.storage().bucket(VIDEO_BUCKET);
+  const object = bucket.file(objectName);
+  const [exists] = await object.exists();
+  if (exists) return;
+
+  const tmpDir = path.join(os.tmpdir(), `preview-${fileId}`);
+  try {
+    fs.mkdirSync(tmpDir, { recursive: true });
+    await execFilePromise('qlmanage', ['-t', '-s', '1600', '-o', tmpDir, fullPath], { timeout: 20000 });
+    const outputFiles = fs.readdirSync(tmpDir).filter((f) => f.endsWith('.png'));
+    if (outputFiles.length === 0) return;
+    await bucket.upload(path.join(tmpDir, outputFiles[0]), {
+      destination: objectName,
+      metadata: { contentType: 'image/png' },
+    });
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+}
+
 // Configuration
 const ARCHIVE_ROOT = process.argv[2] || '/Users/okilavuz/Desktop/Omer/TK-2026';
 const FORCE_SCAN = process.argv[3] === '--force';
+// Every file's auto-tags are derived from its path RELATIVE TO ARCHIVE_ROOT
+// (see extractAutoTags below), so a newly-added subfolder needs to be
+// walked with ARCHIVE_ROOT still pointing at the real archive root — not
+// scanned as its own root — or it loses the "thy"/"account"/"2026" tags
+// every other file gets. But re-walking the whole archive to pick up one
+// new subfolder is prohibitively expensive (this scanner has no
+// incremental skip — every file gets re-hashed, every video re-extracted,
+// regardless of whether it's already indexed). SCAN_START_DIR lets a
+// narrower subtree be walked while ARCHIVE_ROOT (passed as argv[2], e.g.
+// /Volumes/TRIBAL) still anchors the tag-relative path — added 2026-09-24
+// for onboarding a new SKYTRAX2026 folder without re-touching the archive.
+const SCAN_START = process.env.SCAN_START_DIR || ARCHIVE_ROOT;
 
-console.log(`📂 Scanning: ${ARCHIVE_ROOT}`);
+console.log(`📂 Scanning: ${SCAN_START} (etiket kökü: ${ARCHIVE_ROOT})`);
 console.log(`🔄 Force: ${FORCE_SCAN}\n`);
 
 async function calculateHash(filePath) {
@@ -129,6 +176,18 @@ async function scanDirectory(dirPath, scanId) {
                 generated: true,
                 generatedAt: Date.now()
               };
+            }
+
+            // Only actual raster images get the big lightbox view (PDFs
+            // render via their own iframe there, PSD/AI get no preview at
+            // all — see FilePreview in DAMDashboard.jsx), so only those
+            // need the high-res upload.
+            if (mimeType.startsWith('image/')) {
+              try {
+                await uploadImagePreviewIfNeeded(fullPath, fileId);
+              } catch (uploadErr) {
+                console.error(`\n⚠️  Image preview upload failed for ${entry.name}:`, uploadErr.message);
+              }
             }
           }
 
@@ -278,7 +337,7 @@ async function run() {
 
     // Scan directory
     console.log(`🔍 Scanning directory...`);
-    const files = await scanDirectory(ARCHIVE_ROOT, scanId);
+    const files = await scanDirectory(SCAN_START, scanId);
     console.log(`\n📁 Found ${files.length} files\n`);
 
     // Preserve curation from previous scans — tags (manual and Claude
@@ -290,7 +349,7 @@ async function run() {
     // thumbnail, scan bookkeeping) are meant to refresh.
     console.log(`🔎 Checking for existing curation to preserve...`);
     const PRESERVE_FIELDS = [
-      'tags', 'needs_tagging', 'tagSource', 'taggedAt',
+      'tags', 'needs_tagging', 'tagSource', 'taggedAt', 'ai',
       'description', 'descriptionSource', 'copyright', 'license', 'usage',
     ];
     const existingByFileId = new Map();
@@ -312,7 +371,7 @@ async function run() {
       // Preserving may have swapped in curated tags (manually added after
       // the auto-tag pass) — recompute searchTokens from whichever tags
       // actually ended up on the file, not the pre-preserve auto tags.
-      file.searchTokens = generateSearchTokens(file.name, file.tags);
+      file.searchTokens = generateSearchTokens(file.name, file.tags, aiSearchText(file.ai));
     }
     console.log(`  Preserved curation on ${existingByFileId.size} already-scanned files\n`);
 

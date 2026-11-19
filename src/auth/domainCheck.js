@@ -1,4 +1,4 @@
-const ALLOWED_DOMAINS = ['tribalistanbul.com', 'twist.ddb.com']
+const ALLOWED_DOMAINS = ['tribalistanbul.com', 'twist.ddb.com', 'thy.com']
 
 export function isAllowedDomain(email) {
   if (!email || !email.includes('@')) return false

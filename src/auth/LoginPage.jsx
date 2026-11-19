@@ -1,28 +1,29 @@
 import { useState } from 'react'
-import { signInWithEmailAndPassword } from 'firebase/auth'
-import { auth } from '../firebase'
+import { signInWithEmailAndPassword, sendPasswordResetEmail } from 'firebase/auth'
+import { httpsCallable } from 'firebase/functions'
+import { auth, functions } from '../firebase'
 import { isAllowedDomain } from './domainCheck'
+import GlobeLoader from '../components/dam/GlobeLoader'
+import tribalWordmarkBlack from '../assets/tribal-wordmark-black.png'
 
-const TribalLogo = () => (
-  <img
-    src="https://tribalistanbul.com/wp-content/themes/tribaltheme/assets/icons/logo.svg"
-    alt="Tribal Worldwide Istanbul"
-    style={{ width: 100, height: 'auto', display: 'block' }}
-  />
-)
+const NAVY = '#0A1E42'
+
+const inputClass =
+  'w-full box-border px-4 py-3 bg-white/40 backdrop-blur-[1px] border border-white/70 rounded-lg text-sm text-slate-900 placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:bg-white/70 transition'
 
 export default function LoginPage({ domainError }) {
+  const [mode, setMode] = useState('login') // 'login' | 'request'
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
-  const [focusedField, setFocusedField] = useState(null)
+  const [requestSent, setRequestSent] = useState(false)
 
   async function handleLogin(e) {
     e.preventDefault()
     setError('')
     if (!isAllowedDomain(email)) {
-      setError('Yalnızca @tribalistanbul.com ve @twist.ddb.com adresleriyle giriş yapabilirsiniz.')
+      setError('Yalnızca @tribalistanbul.com, @twist.ddb.com ve @thy.com adresleriyle giriş yapabilirsiniz.')
       return
     }
     setLoading(true)
@@ -35,183 +36,150 @@ export default function LoginPage({ domainError }) {
     }
   }
 
+  // First-time visitors and anyone who's forgotten their password land here
+  // via the same flow: request an account (a no-op if one already exists),
+  // then let Firebase Auth's own hosted email handle actually delivering a
+  // "set your password" link — no custom mail sending on our side.
+  async function handleRequestAccess(e) {
+    e.preventDefault()
+    setError('')
+    if (!isAllowedDomain(email)) {
+      setError('Yalnızca @tribalistanbul.com, @twist.ddb.com ve @thy.com adresleriyle hesap oluşturulabilir.')
+      return
+    }
+    setLoading(true)
+    try {
+      const requestAccess = httpsCallable(functions, 'requestAccess')
+      await requestAccess({ email })
+      await sendPasswordResetEmail(auth, email)
+      setRequestSent(true)
+    } catch {
+      setError('Bir şeyler ters gitti. Lütfen tekrar deneyin.')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  function switchMode(next) {
+    setMode(next)
+    setError('')
+    setRequestSent(false)
+  }
+
   return (
-    <div style={{
-      minHeight: '100vh',
-      background: '#080808',
-      display: 'flex',
-      alignItems: 'center',
-      justifyContent: 'center',
-      fontFamily: "'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif",
-      position: 'relative',
-      overflow: 'hidden',
-    }}>
+    <div className="min-h-screen relative overflow-hidden flex items-center justify-center px-6">
+      {/* Same THY globe animation as the archive header, scaled up to fill
+          the whole page — the login screen's only "content" behind the card,
+          rather than a separate static background. */}
+      <div className="absolute inset-0">
+        <GlobeLoader />
+      </div>
 
-      {/* Subtle background grid */}
-      <div style={{
-        position: 'absolute', inset: 0, opacity: 0.03,
-        backgroundImage: 'linear-gradient(#fff 1px, transparent 1px), linear-gradient(90deg, #fff 1px, transparent 1px)',
-        backgroundSize: '60px 60px',
-      }} />
-
-      {/* Gold accent glow top-left */}
-      <div style={{
-        position: 'absolute', top: -200, left: -200,
-        width: 500, height: 500, borderRadius: '50%',
-        background: 'radial-gradient(circle, rgba(247,212,23,0.06) 0%, transparent 70%)',
-        pointerEvents: 'none',
-      }} />
-
-      {/* Orange accent glow bottom-right */}
-      <div style={{
-        position: 'absolute', bottom: -200, right: -200,
-        width: 500, height: 500, borderRadius: '50%',
-        background: 'radial-gradient(circle, rgba(255,107,43,0.05) 0%, transparent 70%)',
-        pointerEvents: 'none',
-      }} />
-
-      {/* Card */}
-      <div style={{
-        position: 'relative', zIndex: 1,
-        width: '100%', maxWidth: 400,
-        padding: '0 24px',
-      }}>
-
-        {/* Logo + Brand */}
-        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', marginBottom: 48 }}>
-          <div style={{
-            padding: '20px 24px 16px',
-            background: '#fff',
-            border: '1px solid #E8E8E8',
-            borderRadius: 16,
-            marginBottom: 28,
-            boxShadow: '0 8px 32px rgba(0,0,0,0.4)',
-          }}>
-            <TribalLogo />
-          </div>
-
-          <div style={{ textAlign: 'center' }}>
-            <h1 style={{
-              margin: 0,
-              fontSize: 22,
-              fontWeight: 700,
-              color: '#fff',
-              letterSpacing: '-0.3px',
-            }}>
-              İlham <span style={{ color: '#F7D417' }}>Arşivi</span>
-            </h1>
-            <p style={{
-              margin: '8px 0 0',
-              fontSize: 13,
-              color: '#444',
-              letterSpacing: '0.02em',
-              lineHeight: 1.6,
-            }}>
-              Tribal Worldwide Istanbul'un ödüllü işleri<br />ve yaratıcı arşivi — yalnızca ekip üyelerine özel.
-            </p>
-          </div>
+      <div className="relative z-10 w-full max-w-[400px] py-12">
+        <div className="flex flex-col items-center mb-8">
+          <img src={tribalWordmarkBlack} alt="Tribal Worldwide Istanbul" style={{ height: 32, width: 'auto' }} />
+          <h1 className="font-bold text-3xl mt-5 tracking-tight" style={{ color: NAVY }}>
+            TK Archive
+          </h1>
+          <p className="text-sm mt-1.5" style={{ color: NAVY, opacity: 0.55 }}>
+            Dijital Varlık Yönetim Sistemi
+          </p>
         </div>
 
-        {/* Form */}
-        <form onSubmit={handleLogin} style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+        <div className="bg-white/15 backdrop-blur-[1px] rounded-2xl shadow-xl border border-white/40 p-6">
+          {mode === 'login' ? (
+            <form onSubmit={handleLogin} className="flex flex-col gap-3">
+              {(domainError || error) && (
+                <div className="p-3 bg-red-50/60 backdrop-blur-[1px] border border-red-200/70 rounded-lg text-xs text-red-800 leading-relaxed">
+                  {domainError ? 'Bu e-posta adresiyle giriş yapamazsınız.' : error}
+                </div>
+              )}
 
-          {(domainError || error) && (
-            <div style={{
-              background: 'rgba(255,60,60,0.08)',
-              border: '1px solid rgba(255,60,60,0.2)',
-              borderRadius: 8,
-              padding: '10px 14px',
-              fontSize: 13,
-              color: '#ff6b6b',
-              lineHeight: 1.5,
-            }}>
-              {domainError ? 'Bu e-posta adresiyle giriş yapamazsınız.' : error}
+              <input
+                type="email"
+                placeholder="ad@tribalistanbul.com"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                required
+                className={inputClass}
+              />
+              <input
+                type="password"
+                placeholder="Şifre"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                required
+                className={inputClass}
+              />
+
+              <button
+                type="submit"
+                disabled={loading}
+                className="mt-1 py-3 rounded-lg bg-[#acaeb2bf] backdrop-blur-[1px] hover:bg-[#acaeb2] disabled:opacity-50 text-white font-semibold text-sm transition"
+              >
+                {loading ? 'Giriş yapılıyor...' : 'Giriş Yap'}
+              </button>
+
+              <button
+                type="button"
+                onClick={() => switchMode('request')}
+                className="mt-1 py-1 text-xs text-slate-500 hover:text-slate-700 hover:underline"
+              >
+                Şifreni mi unuttun veya ilk kez mi giriyorsun? Şifre al
+              </button>
+            </form>
+          ) : requestSent ? (
+            <div className="flex flex-col gap-4 text-center">
+              <div className="p-3 bg-green-50/60 backdrop-blur-[1px] border border-green-200/70 rounded-lg text-xs text-green-800 leading-relaxed">
+                {email} adresine bir bağlantı gönderdik. Gelen kutunu (ve spam klasörünü) kontrol edip şifreni oluştur.
+              </div>
+              <button
+                type="button"
+                onClick={() => switchMode('login')}
+                className="py-1 text-xs text-slate-500 hover:text-slate-700 hover:underline"
+              >
+                Giriş ekranına dön
+              </button>
             </div>
+          ) : (
+            <form onSubmit={handleRequestAccess} className="flex flex-col gap-3">
+              <p className="text-xs text-slate-500 leading-relaxed">
+                E-posta adresini gir, sana şifreni oluşturman için bir bağlantı gönderelim.
+              </p>
+
+              {error && (
+                <div className="p-3 bg-red-50/60 backdrop-blur-[1px] border border-red-200/70 rounded-lg text-xs text-red-800 leading-relaxed">
+                  {error}
+                </div>
+              )}
+
+              <input
+                type="email"
+                placeholder="ad@tribalistanbul.com"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                required
+                className={inputClass}
+              />
+
+              <button
+                type="submit"
+                disabled={loading}
+                className="mt-1 py-3 rounded-lg bg-[#acaeb2bf] backdrop-blur-[1px] hover:bg-[#acaeb2] disabled:opacity-50 text-white font-semibold text-sm transition"
+              >
+                {loading ? 'Gönderiliyor...' : 'Şifre Al'}
+              </button>
+
+              <button
+                type="button"
+                onClick={() => switchMode('login')}
+                className="py-1 text-xs text-slate-500 hover:text-slate-700 hover:underline"
+              >
+                Giriş ekranına dön
+              </button>
+            </form>
           )}
-
-          <div style={{ position: 'relative' }}>
-            <input
-              type="email"
-              placeholder="ad@tribalistanbul.com"
-              value={email}
-              onChange={e => setEmail(e.target.value)}
-              onFocus={() => setFocusedField('email')}
-              onBlur={() => setFocusedField(null)}
-              required
-              style={{
-                width: '100%', boxSizing: 'border-box',
-                padding: '13px 16px',
-                background: '#0D0D0D',
-                border: `1px solid ${focusedField === 'email' ? '#F7D417' : '#1E1E1E'}`,
-                borderRadius: 10,
-                color: '#fff',
-                fontSize: 14,
-                outline: 'none',
-                transition: 'border-color 0.2s',
-                fontFamily: 'inherit',
-              }}
-            />
-          </div>
-
-          <div style={{ position: 'relative' }}>
-            <input
-              type="password"
-              placeholder="Şifre"
-              value={password}
-              onChange={e => setPassword(e.target.value)}
-              onFocus={() => setFocusedField('password')}
-              onBlur={() => setFocusedField(null)}
-              required
-              style={{
-                width: '100%', boxSizing: 'border-box',
-                padding: '13px 16px',
-                background: '#0D0D0D',
-                border: `1px solid ${focusedField === 'password' ? '#F7D417' : '#1E1E1E'}`,
-                borderRadius: 10,
-                color: '#fff',
-                fontSize: 14,
-                outline: 'none',
-                transition: 'border-color 0.2s',
-                fontFamily: 'inherit',
-              }}
-            />
-          </div>
-
-          <button
-            type="submit"
-            disabled={loading}
-            style={{
-              marginTop: 4,
-              padding: '13px',
-              borderRadius: 10,
-              background: loading ? '#1A1A1A' : '#F7D417',
-              color: loading ? '#555' : '#0A0A0A',
-              border: 'none',
-              cursor: loading ? 'not-allowed' : 'pointer',
-              fontWeight: 700,
-              fontSize: 14,
-              letterSpacing: '0.02em',
-              transition: 'all 0.2s',
-              fontFamily: 'inherit',
-            }}
-            onMouseEnter={e => { if (!loading) e.currentTarget.style.background = '#ffe033' }}
-            onMouseLeave={e => { if (!loading) e.currentTarget.style.background = '#F7D417' }}
-          >
-            {loading ? 'Giriş yapılıyor...' : 'Giriş Yap'}
-          </button>
-        </form>
-
-        {/* Footer note */}
-        <p style={{
-          textAlign: 'center',
-          marginTop: 32,
-          fontSize: 11,
-          color: '#2A2A2A',
-          letterSpacing: '0.06em',
-          textTransform: 'uppercase',
-        }}>
-          Tribal Worldwide Istanbul · Dahili Platform
-        </p>
+        </div>
       </div>
     </div>
   )

@@ -1,14 +1,23 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect } from 'react'
 import damService from '../../services/damService'
+import { XIcon, TagIcon, ScaleIcon, CalendarIcon, FileIcon, BarChartIcon, FilmIcon } from '../icons'
 
-const SEARCH_DEBOUNCE_MS = 350
+const MEDIA_TYPE_LABELS = {
+  video: 'Video',
+  image: 'Fotoğraf',
+  design: 'Tasarım (PSD/AI)',
+  document: 'Belge (PDF vb.)',
+  other: 'Diğer',
+}
 
 export default function SearchFilters({ filters, onChange }) {
   const [tags, setTags] = useState([])
-  const [searchQuery, setSearchQuery] = useState(filters.query || '')
-  const searchDebounceRef = useRef(null)
   const [selectedSources, setSelectedSources] = useState(filters.sources || ['local', 'drive'])
-  const [selectedTags, setSelectedTags] = useState(filters.tags || [])
+  // Derived straight from the prop, not mirrored into local state — tags can
+  // also be selected from SearchBar.jsx's suggestion dropdown, so a local
+  // copy here would go stale the moment that happens (checkboxes and the
+  // active-filter chips below would silently stop reflecting reality).
+  const selectedTags = filters.tags || []
   const [dateFrom, setDateFrom] = useState(
     filters.dateRange?.from ? new Date(filters.dateRange.from).toISOString().slice(0, 7) : ''
   )
@@ -16,7 +25,7 @@ export default function SearchFilters({ filters, onChange }) {
     filters.dateRange?.to ? new Date(filters.dateRange.to).toISOString().slice(0, 7) : ''
   )
   const [selectedLicenseTypes, setSelectedLicenseTypes] = useState(filters.licenseType || [])
-  const [showTagSuggestions, setShowTagSuggestions] = useState(false)
+  const [selectedMediaTypes, setSelectedMediaTypes] = useState(filters.type || [])
 
   const LICENSE_TYPE_LABELS = {
     commercial: 'commercial — Ticari Kullanım',
@@ -30,12 +39,6 @@ export default function SearchFilters({ filters, onChange }) {
     loadTags()
   }, [])
 
-  useEffect(() => {
-    return () => {
-      if (searchDebounceRef.current) clearTimeout(searchDebounceRef.current)
-    }
-  }, [])
-
   async function loadTags() {
     try {
       const tagList = await damService.getTags()
@@ -43,20 +46,6 @@ export default function SearchFilters({ filters, onChange }) {
     } catch (err) {
       console.error('Etiketler yüklenemedi:', err)
     }
-  }
-
-  // The input updates immediately (feels responsive), but the actual query
-  // — which now fires a real Firestore request per change, unlike the old
-  // slow client-side scan — waits until typing pauses. Without this, each
-  // keystroke started its own search, and DAMDashboard.jsx had to guard
-  // against them resolving out of order (see requestIdRef there); debouncing
-  // here means that mostly doesn't even come up in normal typing.
-  function handleSearchChange(value) {
-    setSearchQuery(value)
-    if (searchDebounceRef.current) clearTimeout(searchDebounceRef.current)
-    searchDebounceRef.current = setTimeout(() => {
-      onChange({ query: value })
-    }, SEARCH_DEBOUNCE_MS)
   }
 
   function handleSourceToggle(source) {
@@ -67,38 +56,24 @@ export default function SearchFilters({ filters, onChange }) {
     onChange({ sources: updated })
   }
 
+  // Segmented control over the same `sources` filter as handleSourceToggle
+  // (both/local/drive) — 'all' sets both flags back on rather than being a
+  // separate mode, so this stays in sync with the checkbox-style toggle
+  // logic above instead of introducing a second source of truth.
+  function handleSourceSegment(segment) {
+    const updated = segment === 'all' ? ['local', 'drive'] : [segment]
+    setSelectedSources(updated)
+    onChange({ sources: updated })
+  }
+  const sourceSegment =
+    selectedSources.length === 1 ? selectedSources[0] : 'all'
+
   function handleTagToggle(tagId) {
     const updated = selectedTags.includes(tagId)
       ? selectedTags.filter((t) => t !== tagId)
       : [...selectedTags, tagId]
-    setSelectedTags(updated)
     onChange({ tags: updated })
   }
-
-  // Picking a suggestion applies it as a real tag filter (a fast, exact
-  // Firestore query) instead of leaving it as free text, which has to
-  // scan every raw document client-side to find matches — much slower for
-  // an uncommon term. The text box clears so the two don't stack.
-  function handleSelectTagSuggestion(tagId) {
-    // A pending debounce from the typing that surfaced this suggestion
-    // would otherwise fire ~350ms later and overwrite the clear below.
-    if (searchDebounceRef.current) clearTimeout(searchDebounceRef.current)
-    handleTagToggle(tagId)
-    setSearchQuery('')
-    onChange({ query: '' })
-    setShowTagSuggestions(false)
-  }
-
-  const tagSuggestions =
-    searchQuery.trim().length > 0
-      ? tags
-          .filter(
-            (tag) =>
-              !selectedTags.includes(tag.tagId) &&
-              tag.displayName.toLowerCase().includes(searchQuery.trim().toLowerCase())
-          )
-          .slice(0, 8)
-      : []
 
   function handleSortChange(sortBy, sortOrder) {
     onChange({ sortBy, sortOrder })
@@ -145,20 +120,27 @@ export default function SearchFilters({ filters, onChange }) {
     onChange({ licenseType: updated })
   }
 
+  function handleMediaTypeToggle(type) {
+    const updated = selectedMediaTypes.includes(type)
+      ? selectedMediaTypes.filter((t) => t !== type)
+      : [...selectedMediaTypes, type]
+    setSelectedMediaTypes(updated)
+    onChange({ type: updated })
+  }
+
   function handleClearFilters() {
-    if (searchDebounceRef.current) clearTimeout(searchDebounceRef.current)
-    setSearchQuery('')
     setSelectedSources(['local', 'drive'])
-    setSelectedTags([])
     setDateFrom('')
     setDateTo('')
     setSelectedLicenseTypes([])
+    setSelectedMediaTypes([])
     onChange({
       query: '',
       sources: ['local', 'drive'],
       tags: [],
       dateRange: null,
       licenseType: [],
+      type: [],
     })
   }
 
@@ -176,89 +158,154 @@ export default function SearchFilters({ filters, onChange }) {
       </div>
 
       <div className="p-4 space-y-6">
-        {/* Search */}
-        <div className="relative">
-          <label className="block text-sm font-medium text-slate-900 dark:text-white mb-2">
-            🔍 Ara
-          </label>
-          <input
-            type="text"
-            value={searchQuery}
-            onChange={(e) => {
-              handleSearchChange(e.target.value)
-              setShowTagSuggestions(true)
-            }}
-            onFocus={() => setShowTagSuggestions(true)}
-            onBlur={() => setShowTagSuggestions(false)}
-            onKeyDown={(e) => {
-              if (e.key === 'Escape') setShowTagSuggestions(false)
-            }}
-            placeholder="Dosya adı, etiket..."
-            autoComplete="off"
-            className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-700 border border-slate-300 dark:border-slate-600 rounded-lg text-slate-900 dark:text-white placeholder-slate-500 dark:placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500"
-          />
-
-          {showTagSuggestions && tagSuggestions.length > 0 && (
-            <ul className="absolute z-10 mt-1 w-full bg-white dark:bg-slate-700 border border-slate-300 dark:border-slate-600 rounded-lg shadow-lg max-h-56 overflow-y-auto">
-              {tagSuggestions.map((tag) => (
-                <li key={tag.tagId}>
-                  <button
-                    type="button"
-                    // onMouseDown fires before the input's onBlur, so the
-                    // click registers before the dropdown closes.
-                    onMouseDown={(e) => {
-                      e.preventDefault()
-                      handleSelectTagSuggestion(tag.tagId)
-                    }}
-                    className="w-full flex items-center justify-between px-3 py-2 text-sm text-left text-slate-700 dark:text-slate-200 hover:bg-blue-50 dark:hover:bg-slate-600"
-                  >
-                    <span>🏷️ {tag.displayName}</span>
-                    <span className="text-xs text-slate-500 dark:text-slate-400">
-                      {tag.usageCount}
-                    </span>
-                  </button>
-                </li>
-              ))}
-            </ul>
-          )}
-        </div>
-
-        {/* Source Filter */}
+        {/* Source Filter — segmented control, sits above every other filter
+            per the source location it implies (Drive assets download
+            directly; local/TRIBAL assets only expose a path). */}
         <div>
           <label className="block text-sm font-medium text-slate-900 dark:text-white mb-2">
-            📂 Kaynak
+            Kaynak
           </label>
-          <div className="space-y-2">
-            <label className="flex items-center">
-              <input
-                type="checkbox"
-                checked={selectedSources.includes('local')}
-                onChange={() => handleSourceToggle('local')}
-                className="rounded border-slate-300 text-blue-600 focus:ring-blue-500 cursor-pointer"
-              />
-              <span className="ml-2 text-sm text-slate-700 dark:text-slate-300 cursor-pointer">
-                Yerel Klasör
-              </span>
-            </label>
-            <label className="flex items-center">
-              <input
-                type="checkbox"
-                checked={selectedSources.includes('drive')}
-                onChange={() => handleSourceToggle('drive')}
-                className="rounded border-slate-300 text-blue-600 focus:ring-blue-500 cursor-pointer"
-              />
-              <span className="ml-2 text-sm text-slate-700 dark:text-slate-300 cursor-pointer">
-                Google Drive
-              </span>
-            </label>
+          <div className="flex rounded-lg border border-slate-300 dark:border-slate-600 overflow-hidden text-sm">
+            {[
+              { value: 'all', label: 'Tümü' },
+              { value: 'local', label: 'Yerel' },
+              { value: 'drive', label: 'Drive' },
+            ].map((opt, i) => (
+              <button
+                key={opt.value}
+                type="button"
+                onClick={() => handleSourceSegment(opt.value)}
+                className={`flex-1 py-1.5 font-medium transition-colors ${
+                  i > 0 ? 'border-l border-slate-300 dark:border-slate-600' : ''
+                } ${
+                  sourceSegment === opt.value
+                    ? 'bg-slate-900 dark:bg-white text-white dark:text-slate-900'
+                    : 'bg-white dark:bg-slate-700 text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-600'
+                }`}
+              >
+                {opt.label}
+              </button>
+            ))}
           </div>
         </div>
+
+        {/* Media Type Filter — broad category (video/image/design/document),
+            not raw extension/MIME; see getMediaCategory() in damService.ts. */}
+        <div>
+          <label className="flex items-center gap-1.5 text-sm font-medium text-slate-900 dark:text-white mb-2">
+            <FilmIcon size={15} /> Dosya Türü
+          </label>
+          <div className="space-y-2">
+            {['video', 'image', 'design', 'document', 'other'].map((type) => (
+              <label key={type} className="flex items-center">
+                <input
+                  type="checkbox"
+                  checked={selectedMediaTypes.includes(type)}
+                  onChange={() => handleMediaTypeToggle(type)}
+                  className="rounded border-slate-300 text-blue-600 focus:ring-blue-500 cursor-pointer"
+                />
+                <span className="ml-2 text-sm text-slate-700 dark:text-slate-300 cursor-pointer">
+                  {MEDIA_TYPE_LABELS[type]}
+                </span>
+              </label>
+            ))}
+          </div>
+        </div>
+
+        {/* Search itself now lives in SearchBar.jsx, full-width above the
+            fold — this panel keeps only the secondary filters. The active
+            summary below still surfaces the query as a removable chip since
+            `filters.query` is shared state either way. */}
+
+        {/* Active filter summary — every non-default selection as a
+            removable chip, so a full set of filters is scannable/undoable
+            at a glance instead of only visible by re-opening each section. */}
+        {(filters.query || selectedTags.length > 0 || selectedLicenseTypes.length > 0 || selectedMediaTypes.length > 0 || dateFrom || dateTo) && (
+          <div className="flex flex-wrap gap-1.5 -mt-2">
+            {filters.query && (
+              <span className="inline-flex items-center gap-1 pl-2.5 pr-1.5 py-1 text-xs bg-slate-100 dark:bg-slate-700 text-slate-700 dark:text-slate-200 rounded-full">
+                "{filters.query}"
+                <button
+                  type="button"
+                  onMouseDown={(e) => {
+                    e.preventDefault()
+                    onChange({ query: '' })
+                  }}
+                  className="hover:text-red-600 dark:hover:text-red-400"
+                >
+                  <XIcon size={12} />
+                </button>
+              </span>
+            )}
+            {selectedTags.map((tagId) => (
+              <span
+                key={tagId}
+                className="inline-flex items-center gap-1 pl-2.5 pr-1.5 py-1 text-xs bg-blue-50 dark:bg-blue-900/40 text-blue-700 dark:text-blue-300 rounded-full"
+              >
+                <TagIcon size={12} /> {tags.find((t) => t.tagId === tagId)?.displayName || tagId}
+                <button
+                  type="button"
+                  onClick={() => handleTagToggle(tagId)}
+                  className="hover:text-red-600 dark:hover:text-red-400"
+                >
+                  <XIcon size={12} />
+                </button>
+              </span>
+            ))}
+            {selectedMediaTypes.map((type) => (
+              <span
+                key={type}
+                className="inline-flex items-center gap-1 pl-2.5 pr-1.5 py-1 text-xs bg-emerald-50 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-300 rounded-full"
+              >
+                <FilmIcon size={12} /> {MEDIA_TYPE_LABELS[type] || type}
+                <button
+                  type="button"
+                  onClick={() => handleMediaTypeToggle(type)}
+                  className="hover:text-red-600 dark:hover:text-red-400"
+                >
+                  <XIcon size={12} />
+                </button>
+              </span>
+            ))}
+            {selectedLicenseTypes.map((type) => (
+              <span
+                key={type}
+                className="inline-flex items-center gap-1 pl-2.5 pr-1.5 py-1 text-xs bg-amber-50 dark:bg-amber-900/30 text-amber-700 dark:text-amber-300 rounded-full"
+              >
+<ScaleIcon size={12} /> {type}
+                <button
+                  type="button"
+                  onClick={() => handleLicenseTypeToggle(type)}
+                  className="hover:text-red-600 dark:hover:text-red-400"
+                >
+                  <XIcon size={12} />
+                </button>
+              </span>
+            ))}
+            {(dateFrom || dateTo) && (
+              <span className="inline-flex items-center gap-1 pl-2.5 pr-1.5 py-1 text-xs bg-slate-100 dark:bg-slate-700 text-slate-700 dark:text-slate-200 rounded-full">
+<CalendarIcon size={12} /> {dateFrom || '…'} – {dateTo || '…'}
+                <button
+                  type="button"
+                  onClick={() => {
+                    setDateFrom('')
+                    setDateTo('')
+                    onChange({ dateRange: null })
+                  }}
+                  className="hover:text-red-600 dark:hover:text-red-400"
+                >
+                  <XIcon size={12} />
+                </button>
+              </span>
+            )}
+          </div>
+        )}
 
         {/* Tags Filter */}
         {tags.length > 0 && (
           <div>
-            <label className="block text-sm font-medium text-slate-900 dark:text-white mb-2">
-              🏷️ Etiketler
+            <label className="flex items-center gap-1.5 text-sm font-medium text-slate-900 dark:text-white mb-2">
+              <TagIcon size={15} /> Etiketler
             </label>
             <div className="space-y-2 max-h-40 overflow-y-auto">
               {tags.map((tag) => (
@@ -283,8 +330,8 @@ export default function SearchFilters({ filters, onChange }) {
 
         {/* Date Range Filter (month/year precision — day doesn't matter) */}
         <div>
-          <label className="block text-sm font-medium text-slate-900 dark:text-white mb-2">
-            📅 Tarih Aralığı (Ay/Yıl)
+          <label className="flex items-center gap-1.5 text-sm font-medium text-slate-900 dark:text-white mb-2">
+            <CalendarIcon size={15} /> Tarih Aralığı (Ay/Yıl)
           </label>
           <div className="flex items-center gap-2">
             <input
@@ -307,8 +354,8 @@ export default function SearchFilters({ filters, onChange }) {
 
         {/* License Type Filter */}
         <div>
-          <label className="block text-sm font-medium text-slate-900 dark:text-white mb-2">
-            📜 Lisans Türü
+          <label className="flex items-center gap-1.5 text-sm font-medium text-slate-900 dark:text-white mb-2">
+            <FileIcon size={15} /> Lisans Türü
           </label>
           <div className="space-y-2">
             {['commercial', 'RF', 'RM', 'custom'].map((type) => (
@@ -329,21 +376,34 @@ export default function SearchFilters({ filters, onChange }) {
 
         {/* Sorting */}
         <div>
-          <label className="block text-sm font-medium text-slate-900 dark:text-white mb-2">
-            📊 Sıralama
+          <label className="flex items-center gap-1.5 text-sm font-medium text-slate-900 dark:text-white mb-2">
+            <BarChartIcon size={15} /> Sıralama
           </label>
           <div className="space-y-2">
             <select
-              onChange={(e) =>
-                handleSortChange(e.target.value, filters.sortOrder)
-              }
-              defaultValue={filters.sortBy || 'modifiedAt'}
+              onChange={(e) => {
+                const [sortBy, sortOrder] = e.target.value.split(':')
+                handleSortChange(sortBy, sortOrder)
+              }}
+              defaultValue={`${filters.sortBy || 'modifiedAt'}:${filters.sortOrder || 'desc'}`}
               className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-700 border border-slate-300 dark:border-slate-600 rounded-lg text-slate-900 dark:text-white text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
             >
-              <option value="modifiedAt">Tarihe Göre (Yeni)</option>
-              <option value="name">Adına Göre</option>
-              <option value="size">Boyuta Göre</option>
-              <option value="views">Görüntülemeye Göre</option>
+              <optgroup label="Değiştirilme Tarihi">
+                <option value="modifiedAt:desc">Tarihe Göre (Yeni)</option>
+                <option value="modifiedAt:asc">Tarihe Göre (Eski)</option>
+              </optgroup>
+              <optgroup label="Oluşturulma Tarihi">
+                <option value="createdAt:desc">Oluşturulma Tarihine Göre (Yeni)</option>
+                <option value="createdAt:asc">Oluşturulma Tarihine Göre (Eski)</option>
+              </optgroup>
+              <optgroup label="Ad">
+                <option value="name:asc">Adına Göre (A-Z)</option>
+                <option value="name:desc">Adına Göre (Z-A)</option>
+              </optgroup>
+              <optgroup label="Boyut">
+                <option value="size:desc">Boyuta Göre (Büyük)</option>
+                <option value="size:asc">Boyuta Göre (Küçük)</option>
+              </optgroup>
             </select>
           </div>
         </div>
@@ -356,9 +416,9 @@ export default function SearchFilters({ filters, onChange }) {
                 {selectedTags.length} etiket seçili •
               </span>
             )}
-            {searchQuery && (
+            {filters.query && (
               <span>
-                "{searchQuery}" için arama yapılıyor
+                "{filters.query}" için arama yapılıyor
               </span>
             )}
           </p>

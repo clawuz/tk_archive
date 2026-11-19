@@ -1,10 +1,64 @@
 import { useState, useEffect, memo } from 'react'
 import damService from '../../services/damService'
-import * as yoloService from '../../services/yoloService'
 import VideoPreview from './VideoPreview'
 import FileDownload from './FileDownload'
-import FolderBrowser from './FolderBrowser'
 import { useAuth } from '../../auth/AuthProvider'
+import {
+  XIcon,
+  ClipboardIcon,
+  ScaleIcon,
+  PencilIcon,
+  AlertTriangleIcon,
+  TagIcon,
+  SparklesIcon,
+  HourglassIcon,
+  BarChartIcon,
+  EyeIcon,
+} from '../icons'
+
+// Byte-identical copies of this file (hidden from the grid, see
+// mark_duplicates.py) — lists where else the same content lives.
+const DuplicatesList = ({ file }) => {
+  const [copies, setCopies] = useState(null)
+  const ids = file.duplicateIds || []
+
+  useEffect(() => {
+    let cancelled = false
+    setCopies(null)
+    Promise.all(ids.map((id) => damService.getFile(id).catch(() => null))).then((docs) => {
+      if (!cancelled) setCopies(docs.filter(Boolean))
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [file.fileId])
+
+  if (!file.duplicateCount) return null
+  const more = file.duplicateCount - ids.length
+
+  return (
+    <div>
+      <h4 className="font-semibold text-slate-900 dark:text-white mb-2 flex items-center gap-1.5">
+        <ClipboardIcon size={16} /> Kopyalar ({file.duplicateCount})
+      </h4>
+      <p className="text-xs text-slate-500 dark:text-slate-400 mb-2">
+        Aynı içerik sunucuda {file.duplicateCount} yerde daha duruyor; listede yalnızca bu kayıt gösterilir.
+      </p>
+      {copies === null ? (
+        <p className="text-xs text-slate-500">Yükleniyor...</p>
+      ) : (
+        <ul className="space-y-1 max-h-40 overflow-y-auto text-xs text-slate-700 dark:text-slate-300">
+          {copies.map((c) => (
+            <li key={c.fileId} className="break-all" title={c.path}>
+              {c.path}
+            </li>
+          ))}
+          {more > 0 && <li className="text-slate-500">…ve {more} kopya daha</li>}
+        </ul>
+      )}
+    </div>
+  )
+}
 
 const LICENSE_TYPES = ['commercial', 'RF', 'RM', 'custom']
 
@@ -85,9 +139,9 @@ export default function FileDetail({
 
   const [newTag, setNewTag] = useState('')
   const [addingTag, setAddingTag] = useState(false)
-  const [files, setFiles] = useState([])
-  const [loading, setLoading] = useState(false)
   const [tagging, setTagging] = useState(false)
+  // Request sent, local v2 worker hasn't finished yet — see handleAutoTag
+  const [tagQueued, setTagQueued] = useState(false)
   const [tagError, setTagError] = useState(null)
   const [localTags, setLocalTags] = useState(file.tags || [])
 
@@ -106,6 +160,33 @@ export default function FileDetail({
   // player — the browser's native controls scale fine at any width.
   const isDriveVideo = isVideoFile && !!file.driveFileId
 
+  // The poster box below was hardcoded to aspect-video (16:9, landscape)
+  // with object-cover — fine for landscape frames, but a portrait-shot
+  // video (common for social content) got its preview frame cropped down
+  // to a thin horizontal sliver, since object-cover fills a wide box by
+  // scaling to width and cutting off everything above/below. Real example
+  // (2026-10-02): DSC_3865.MOV, a vertical video, showed only a cropped-in
+  // strip of its frame. Fixed the same way VideoPreview.jsx already
+  // handles this for the actual <video> element — measure the real
+  // image's natural dimensions and size the box to match, so nothing
+  // gets cropped regardless of orientation.
+  const posterSrc = hasVideoFrames
+    ? `data:image/jpeg;base64,${file.videoPreviewFrames[selectedFrameIndex]?.frameData}`
+    : file.thumbnailUrl
+  const [posterAspectRatio, setPosterAspectRatio] = useState('16 / 9')
+
+  useEffect(() => {
+    if (!posterSrc) return
+    const img = new Image()
+    img.onload = () => {
+      if (img.naturalWidth && img.naturalHeight) {
+        setPosterAspectRatio(`${img.naturalWidth} / ${img.naturalHeight}`)
+      }
+    }
+    img.onerror = () => setPosterAspectRatio('16 / 9')
+    img.src = posterSrc
+  }, [posterSrc])
+
   // Reset local tags when the selected file changes
   useEffect(() => {
     setLocalTags(file.tags || [])
@@ -114,30 +195,6 @@ export default function FileDetail({
     setEditingRights(false)
     setRightsError(null)
   }, [file.fileId])
-
-  const handleFolderNavigate = async (folderPath) => {
-    try {
-      setLoading(true)
-      // Search for files with path starting with folderPath
-      const result = await damService.searchFiles(
-        { sources: ['local'], query: folderPath },
-        null,
-        100
-      )
-
-      // Filter to files in this folder and subfolders
-      const filesInFolder = result.files.filter(f =>
-        f.path.startsWith(folderPath + '/')
-      )
-
-      // Update gallery to show filtered files
-      setFiles(filesInFolder)
-    } catch (err) {
-      console.error('Navigation failed:', err)
-    } finally {
-      setLoading(false)
-    }
-  }
 
   async function handleAddTag() {
     if (!canEdit) return
@@ -170,22 +227,80 @@ export default function FileDetail({
     }
   }
 
+  // The button no longer calls Claude (API credit ran out): it raises a
+  // Firestore flag and the local v2 vision worker on the Mac picks it up
+  // (priority queue — see damService.requestAutoTag). The worker is a
+  // separate process, so there's no response to await — the effect below
+  // watches the file doc and applies the result when the worker clears
+  // `tag_requested`.
   async function handleAutoTag() {
     if (!canEdit) return
     try {
       setTagging(true)
       setTagError(null)
-      const newTags = await yoloService.tagFile(file.fileId)
-      const updatedTags = Array.from(new Set([...localTags, ...newTags]))
-      setLocalTags(updatedTags)
-      onFileUpdate?.(file.fileId, { tags: updatedTags })
+      await damService.requestAutoTag(file.fileId)
+      onFileUpdate?.(file.fileId, { tag_requested: true, needs_tagging: true })
+      setTagQueued(true)
     } catch (err) {
-      console.error('Auto-tagging failed:', err)
-      setTagError(err.message || 'Otomatik etiketleme başarısız oldu')
+      console.error('Auto-tagging request failed:', err)
+      setTagError(err.message || 'Otomatik etiketleme isteği gönderilemedi')
     } finally {
       setTagging(false)
     }
   }
+
+  // While a request waits, watch the Mac worker's heartbeat: if it has been
+  // silent for 5+ minutes the request will just sit in the queue.
+  const [workerSilentMin, setWorkerSilentMin] = useState(null)
+  useEffect(() => {
+    if (!tagQueued) {
+      setWorkerSilentMin(null)
+      return
+    }
+    let lastSeenMs = null
+    let loaded = false
+    const recompute = () => {
+      if (!loaded) return
+      const min = lastSeenMs ? Math.floor((Date.now() - lastSeenMs) / 60000) : Infinity
+      setWorkerSilentMin(min >= 5 ? min : null)
+    }
+    const unsub = damService.watchWorkerStatus((st) => {
+      lastSeenMs = st.lastSeenMs
+      loaded = true
+      recompute()
+    })
+    const timer = setInterval(recompute, 30000)
+    return () => {
+      unsub()
+      clearInterval(timer)
+    }
+  }, [tagQueued])
+
+  // A request made earlier (panel closed/reopened, or another admin's click)
+  // may still be waiting on the worker when this file is opened.
+  useEffect(() => {
+    setTagQueued(file.tag_requested === true)
+  }, [file.fileId])
+
+  useEffect(() => {
+    if (!tagQueued) return
+    return damService.watchFile(file.fileId, (data) => {
+      if (data.tag_requested) return
+      const tags = data.tags || []
+      setLocalTags(tags)
+      setTagQueued(false)
+      if (data.ai?.status === 'failed') {
+        setTagError(data.ai.error || 'Otomatik etiketleme başarısız oldu')
+      }
+      onFileUpdate?.(file.fileId, {
+        tags,
+        ai: data.ai,
+        tagSource: data.tagSource,
+        needs_tagging: false,
+        tag_requested: false,
+      })
+    })
+  }, [tagQueued, file.fileId])
 
   async function handleSaveRights() {
     if (!canEdit) return
@@ -232,9 +347,12 @@ export default function FileDetail({
   }
 
   return (
-    <div className="bg-white dark:bg-slate-800 rounded-lg border border-slate-200 dark:border-slate-700 overflow-hidden flex flex-col h-full">
+    // Sized by the modal wrapper in DAMDashboard.jsx now (bg/rounding/border
+    // live there) — this is just the flex-column content structure so the
+    // header stays pinned while the body scrolls.
+    <div className="flex-1 min-h-0 overflow-hidden flex flex-col">
       {/* Header */}
-      <div className="px-4 py-3 border-b border-slate-200 dark:border-slate-700 flex items-center justify-between">
+      <div className="px-4 py-3 border-b border-slate-200 dark:border-slate-700 flex items-center justify-between shrink-0">
         <h3 className="font-semibold text-slate-900 dark:text-white truncate">
           Detaylar
         </h3>
@@ -242,12 +360,19 @@ export default function FileDetail({
           onClick={onClose}
           className="text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-300"
         >
-          ✕
+          <XIcon size={18} />
         </button>
       </div>
 
       {/* Content */}
       <div className="flex-1 overflow-y-auto p-4 space-y-6">
+        {/* Media (preview/player) left, info/rights right on wide screens —
+            this used to be one long stacked column even in the wide modal
+            it now renders in, which read as cramped/scroll-heavy on
+            desktop. Both sides scroll together in the single outer
+            container above; this grid only controls left/right placement. */}
+        <div className="lg:grid lg:grid-cols-2 lg:gap-6 lg:items-start space-y-6 lg:space-y-0">
+        <div className="space-y-6">
         {/* Preview Thumbnail — skipped only for local videos with no
             extracted frames: the inline <video> player below is already
             the preview there, and stacking a second static thumbnail above
@@ -258,15 +383,12 @@ export default function FileDetail({
         {(!isVideoFile || hasVideoFrames || isDriveVideo) && (
           <div>
             <div
-              className="relative w-full aspect-video bg-gradient-to-br from-slate-100 to-slate-200 dark:from-slate-700 dark:to-slate-600 rounded-lg overflow-hidden cursor-pointer hover:opacity-75 transition group"
+              className="relative w-full bg-gradient-to-br from-slate-100 to-slate-200 dark:from-slate-700 dark:to-slate-600 rounded-lg overflow-hidden cursor-pointer hover:opacity-75 transition group"
+              style={{ aspectRatio: posterAspectRatio }}
               onClick={onOpenLightbox}
             >
               <img
-                src={
-                  hasVideoFrames
-                    ? `data:image/jpeg;base64,${file.videoPreviewFrames[selectedFrameIndex]?.frameData}`
-                    : file.thumbnailUrl
-                }
+                src={posterSrc}
                 alt={file.name}
                 className="w-full h-full object-cover"
               />
@@ -326,14 +448,14 @@ export default function FileDetail({
             poster above (opens the lightbox) instead of an inline player;
             see isDriveVideo above. */}
         {!isDriveVideo && <VideoPreview file={file} />}
+        </div>
 
-        {/* Folder Navigation Breadcrumb */}
-        <FolderBrowser file={file} onNavigate={handleFolderNavigate} />
-
+        {/* Right column: File Info + Rights & License */}
+        <div className="space-y-6">
         {/* File Info */}
         <div>
-          <h4 className="font-semibold text-slate-900 dark:text-white mb-3">
-            📋 Dosya Bilgisi
+          <h4 className="font-semibold text-slate-900 dark:text-white mb-3 flex items-center gap-1.5">
+            <ClipboardIcon size={16} /> Dosya Bilgisi
           </h4>
           <div className="space-y-2 text-sm">
             <div className="flex justify-between">
@@ -369,19 +491,64 @@ export default function FileDetail({
           </div>
         </div>
 
+        <DuplicatesList file={file} />
+
+        {/* AI Analizi — v2 (yerel AI worker) sonuçları, sadece bilgi
+            amaçlı gösterim. file.ai varsa gösterilir; şu an worker izole
+            bir test koleksiyonuna yazıyor (bkz. tk-ai-engine planı),
+            gerçek dosyalarda bu alan henüz yok — bölüm o zamana kadar
+            görünmez, mevcut arama/filtre tags alanına dokunmuyor. */}
+        {file.ai?.status === 'completed' && (
+          <div>
+            <h4 className="font-semibold text-slate-900 dark:text-white mb-3 flex items-center gap-1.5">
+              <SparklesIcon size={16} /> AI Analizi
+              <span className="text-[10px] font-normal text-slate-400 dark:text-slate-500">
+                ({file.ai.model?.split('/').pop() || 'yerel model'})
+              </span>
+            </h4>
+            <div className="space-y-3 text-sm">
+              {file.ai.description && (
+                <p className="text-slate-700 dark:text-slate-300">{file.ai.description}</p>
+              )}
+              {file.ai.tags?.length > 0 && (
+                <div className="flex flex-wrap gap-2">
+                  {file.ai.tags.map((tag) => (
+                    <span
+                      key={tag}
+                      className="inline-flex items-center px-3 py-1 bg-purple-100 dark:bg-purple-900/40 text-purple-800 dark:text-purple-200 rounded-full text-xs font-medium"
+                    >
+                      {tag}
+                    </span>
+                  ))}
+                </div>
+              )}
+              {file.ai.onScreenText?.length > 0 && (
+                <div>
+                  <span className="text-xs text-slate-500 dark:text-slate-400">Ekrandaki yazılar:</span>
+                  <ul className="mt-1 space-y-0.5 text-xs text-slate-600 dark:text-slate-400">
+                    {file.ai.onScreenText.map((text, i) => (
+                      <li key={i}>&ldquo;{text}&rdquo;</li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
         {/* Rights & License */}
         {file.copyright && (
           <div>
             <div className="flex items-center justify-between mb-3">
-              <h4 className="font-semibold text-slate-900 dark:text-white">
-                ⚖️ Telif & Lisans
+              <h4 className="font-semibold text-slate-900 dark:text-white flex items-center gap-1.5">
+                <ScaleIcon size={16} /> Telif & Lisans
               </h4>
               {canEdit && !editingRights && (
                 <button
                   onClick={() => setEditingRights(true)}
-                  className="text-xs text-blue-600 dark:text-blue-400 hover:underline"
+                  className="text-xs text-blue-600 dark:text-blue-400 hover:underline flex items-center gap-1"
                 >
-                  ✏️ Düzenle
+                  <PencilIcon size={12} /> Düzenle
                 </button>
               )}
             </div>
@@ -436,14 +603,14 @@ export default function FileDetail({
                       Süresi:
                     </span>
                     <span
-                      className={`font-medium ${
+                      className={`font-medium inline-flex items-center gap-1 ${
                         new Date(rightsForm.expirationDate).getTime() < Date.now()
                           ? 'text-red-600'
                           : 'text-slate-900 dark:text-white'
                       }`}
                     >
                       {new Date(rightsForm.expirationDate).toLocaleDateString('tr-TR')}
-                      {new Date(rightsForm.expirationDate).getTime() < Date.now() && ' ⚠️'}
+                      {new Date(rightsForm.expirationDate).getTime() < Date.now() && <AlertTriangleIcon size={13} />}
                     </span>
                   </div>
                 )}
@@ -575,11 +742,21 @@ export default function FileDetail({
             )}
           </div>
         )}
+        </div>
+        </div>
 
-        {/* Tags */}
+        {/* Tags — tagSource is a per-file flag (not per-tag: manual edits
+            after an auto-tag pass don't get their own provenance), so this
+            surfaces "this file was auto-tagged" rather than fabricating a
+            per-chip AI/manual split the data can't actually support. */}
         <div>
-          <h4 className="font-semibold text-slate-900 dark:text-white mb-3">
-            🏷️ Etiketler
+          <h4 className="font-semibold text-slate-900 dark:text-white mb-3 flex items-center gap-2">
+            <span className="flex items-center gap-1.5"><TagIcon size={16} /> Etiketler</span>
+            {(file.tagSource === 'claude-vision' || file.tagSource === 'local-vision') && (
+              <span className="inline-flex items-center gap-1 text-[10px] font-normal px-2 py-0.5 border border-dashed border-purple-300 dark:border-purple-700 text-purple-600 dark:text-purple-400 rounded-full">
+                <SparklesIcon size={11} /> AI ile etiketlendi
+              </span>
+            )}
           </h4>
           <div className="flex flex-wrap gap-2 mb-3">
             {localTags.map((tag) => (
@@ -595,7 +772,7 @@ export default function FileDetail({
                     aria-label={`${tag} etiketini kaldır`}
                     title="Etiketi kaldır"
                   >
-                    ✕
+                    <XIcon size={12} />
                   </button>
                 )}
               </span>
@@ -623,11 +800,22 @@ export default function FileDetail({
                   {(file.type?.startsWith('video/') || file.type?.startsWith('image/')) && (
                     <button
                       onClick={handleAutoTag}
-                      disabled={tagging}
-                      className="text-xs px-2 py-1 bg-purple-100 dark:bg-purple-900 text-purple-700 dark:text-purple-300 rounded hover:bg-purple-200 dark:hover:bg-purple-800 disabled:opacity-50 disabled:cursor-not-allowed transition"
+                      disabled={tagging || tagQueued}
+                      className="text-xs px-2 py-1 bg-purple-100 dark:bg-purple-900 text-purple-700 dark:text-purple-300 rounded hover:bg-purple-200 dark:hover:bg-purple-800 disabled:opacity-50 disabled:cursor-not-allowed transition inline-flex items-center gap-1"
                     >
-                      {tagging ? '✨ Etiketleniyor...' : '✨ Otomatik Etiketle'}
+                      {tagging || tagQueued ? <HourglassIcon size={12} /> : <SparklesIcon size={12} />}
+                      {tagging ? 'İstek gönderiliyor...' : tagQueued ? 'Kuyrukta, işleniyor...' : 'Otomatik Etiketle'}
                     </button>
+                  )}
+                  {tagQueued && (
+                    <p className="w-full text-[11px] text-slate-500 dark:text-slate-400">
+                      Yerel model işliyor (fotoğraf ~15 sn, video ~1-2 dk). Bitince etiketler burada otomatik güncellenir; paneli kapatabilirsiniz.
+                    </p>
+                  )}
+                  {tagQueued && workerSilentMin !== null && (
+                    <p className="w-full text-[11px] text-amber-600 dark:text-amber-400">
+                      AI worker şu an çevrimdışı görünüyor{Number.isFinite(workerSilentMin) ? ` (son sinyal ${workerSilentMin} dk önce)` : ''}. İstek kuyrukta bekliyor; worker açılınca otomatik işlenecek.
+                    </p>
                   )}
                 </>
               ) : (
@@ -659,8 +847,8 @@ export default function FileDetail({
         {/* Usage Stats */}
         {file.stats && (
           <div>
-            <h4 className="font-semibold text-slate-900 dark:text-white mb-3">
-              📊 Kullanım
+            <h4 className="font-semibold text-slate-900 dark:text-white mb-3 flex items-center gap-1.5">
+              <BarChartIcon size={16} /> Kullanım
             </h4>
             <div className="space-y-2 text-sm">
               <div className="flex justify-between">
@@ -688,9 +876,9 @@ export default function FileDetail({
       <div className="border-t border-slate-200 dark:border-slate-700 p-4 space-y-2">
         <button
           onClick={onOpenLightbox}
-          className="w-full px-4 py-2 bg-blue-500 hover:bg-blue-600 text-white rounded-lg font-medium transition text-sm"
+          className="w-full px-4 py-2 bg-blue-500 hover:bg-blue-600 text-white rounded-lg font-medium transition text-sm flex items-center justify-center gap-1.5"
         >
-          👁️ Önizleme
+          <EyeIcon size={16} /> Önizleme
         </button>
         <FileDownload file={file} />
       </div>

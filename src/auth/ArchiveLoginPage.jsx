@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { signInWithEmailAndPassword } from 'firebase/auth'
 import { auth } from '../firebase'
 import { isAllowedDomain } from './domainCheck'
+import { PackageIcon, HourglassIcon, LogInIcon } from '../components/icons'
 
 export default function ArchiveLoginPage({ domainError }) {
   const [email, setEmail] = useState('')
@@ -119,7 +120,7 @@ export default function ArchiveLoginPage({ domainError }) {
             border: '1px solid rgba(255, 255, 255, 0.1)',
             backdropFilter: 'blur(10px)',
           }}>
-            📦
+            <PackageIcon size={52} strokeWidth={1.5} />
           </div>
 
           <div style={{ textAlign: 'center' }}>
@@ -237,6 +238,10 @@ export default function ArchiveLoginPage({ domainError }) {
               boxShadow: loading ? 'none' : '0 10px 30px rgba(110, 207, 255, 0.3)',
               transform: loading ? 'scale(1)' : 'scale(1)',
               backdropFilter: 'blur(10px)',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              gap: 8,
             }}
             onMouseEnter={(e) => {
               if (!loading) {
@@ -251,7 +256,8 @@ export default function ArchiveLoginPage({ domainError }) {
               }
             }}
           >
-            {loading ? '⏳ Giriş yapılıyor...' : '🚀 Giriş Yap'}
+            {loading ? <HourglassIcon size={16} /> : <LogInIcon size={16} />}
+            {loading ? 'Giriş yapılıyor...' : 'Giriş Yap'}
           </button>
         </form>
 

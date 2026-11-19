@@ -4,6 +4,12 @@
     {
       "name": "tk-archive-preview",
       "url": "http://localhost:4173"
+    },
+    {
+      "name": "tk-archive-dev",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["run", "dev"],
+      "port": 5173
     }
   ]
 }

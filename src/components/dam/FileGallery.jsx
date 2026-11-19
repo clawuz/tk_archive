@@ -3,6 +3,7 @@ import ThumbnailCard from './ThumbnailCard'
 import FileListRow from './FileListRow'
 import damService from '../../services/damService'
 import { useAuth } from '../../auth/AuthProvider'
+import { GridIcon, ListIcon, ScaleIcon } from '../icons'
 
 const VIEW_MODE_KEY = 'tk-archive-view-mode'
 const LICENSE_TYPES = ['commercial', 'RF', 'RM', 'custom']
@@ -18,7 +19,6 @@ const EMPTY_BULK_RIGHTS = {
 
 export default function FileGallery({
   files, // current page only
-  fileCounts = { total: 0, local: 0, drive: 0 }, // archive-wide totals, independent of pagination/filters
   onFileSelect,
   loading,
   onRefresh,
@@ -137,34 +137,6 @@ export default function FileGallery({
 
   return (
     <div className="space-y-6">
-      {/* Stats — true archive-wide totals (Firestore count aggregate), independent of filters/pagination */}
-      <div className="grid grid-cols-3 gap-4">
-        <div className="bg-white dark:bg-slate-800 rounded-lg p-4 border border-slate-200 dark:border-slate-700">
-          <div className="text-2xl font-bold text-slate-900 dark:text-white">
-            {fileCounts.total}
-          </div>
-          <div className="text-sm text-slate-600 dark:text-slate-400 mt-1">
-            Toplam Dosya
-          </div>
-        </div>
-        <div className="bg-white dark:bg-slate-800 rounded-lg p-4 border border-slate-200 dark:border-slate-700">
-          <div className="text-2xl font-bold text-slate-900 dark:text-white">
-            {fileCounts.local}
-          </div>
-          <div className="text-sm text-slate-600 dark:text-slate-400 mt-1">
-            Yerel
-          </div>
-        </div>
-        <div className="bg-white dark:bg-slate-800 rounded-lg p-4 border border-slate-200 dark:border-slate-700">
-          <div className="text-2xl font-bold text-slate-900 dark:text-white">
-            {fileCounts.drive}
-          </div>
-          <div className="text-sm text-slate-600 dark:text-slate-400 mt-1">
-            Drive
-          </div>
-        </div>
-      </div>
-
       {/* Toolbar: page info + view mode toggle */}
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-3">
@@ -191,25 +163,25 @@ export default function FileGallery({
             onClick={() => handleViewModeChange('grid')}
             title="Kutucuk görünümü"
             aria-pressed={viewMode === 'grid'}
-            className={`px-3 py-1.5 rounded-md text-sm font-medium transition ${
+            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm font-medium transition ${
               viewMode === 'grid'
                 ? 'bg-white dark:bg-slate-700 text-slate-900 dark:text-white shadow-sm'
                 : 'text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200'
             }`}
           >
-            ▦ Kutucuk
+            <GridIcon size={14} /> Kutucuk
           </button>
           <button
             onClick={() => handleViewModeChange('list')}
             title="Liste görünümü"
             aria-pressed={viewMode === 'list'}
-            className={`px-3 py-1.5 rounded-md text-sm font-medium transition ${
+            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm font-medium transition ${
               viewMode === 'list'
                 ? 'bg-white dark:bg-slate-700 text-slate-900 dark:text-white shadow-sm'
                 : 'text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200'
             }`}
           >
-            ☰ Liste
+            <ListIcon size={14} /> Liste
           </button>
         </div>
       </div>
@@ -244,9 +216,9 @@ export default function FileGallery({
                 setBulkRightsOpen((v) => !v)
                 setBulkRightsError(null)
               }}
-              className="px-3 py-1.5 bg-white dark:bg-slate-800 border border-blue-300 dark:border-blue-700 text-blue-700 dark:text-blue-300 text-sm font-medium rounded-lg transition hover:bg-blue-100 dark:hover:bg-blue-900/50"
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-white dark:bg-slate-800 border border-blue-300 dark:border-blue-700 text-blue-700 dark:text-blue-300 text-sm font-medium rounded-lg transition hover:bg-blue-100 dark:hover:bg-blue-900/50"
             >
-              ⚖️ Telif Ekle
+              <ScaleIcon size={14} /> Telif Ekle
             </button>
             <button
               onClick={handleClearSelection}

@@ -1,9 +1,11 @@
+import { CalendarIcon, FolderIcon, CloudIcon, CheckIcon, HourglassIcon } from '../icons'
+
 export default function ScanTimeline({ scans }) {
   if (!scans || scans.length === 0) {
     return (
       <div className="bg-white dark:bg-slate-800 rounded-lg border border-slate-200 dark:border-slate-700 p-4">
-        <h3 className="font-semibold text-slate-900 dark:text-white mb-3">
-          📅 Tarama Geçmişi
+        <h3 className="font-semibold text-slate-900 dark:text-white mb-3 flex items-center gap-1.5">
+          <CalendarIcon size={16} /> Tarama Geçmişi
         </h3>
         <p className="text-sm text-slate-600 dark:text-slate-400">
           Henüz tarama geçmişi yok
@@ -42,8 +44,8 @@ export default function ScanTimeline({ scans }) {
     <div className="bg-white dark:bg-slate-800 rounded-lg border border-slate-200 dark:border-slate-700 overflow-hidden">
       {/* Header */}
       <div className="px-4 py-3 border-b border-slate-200 dark:border-slate-700">
-        <h3 className="font-semibold text-slate-900 dark:text-white">
-          📅 Tarama Geçmişi
+        <h3 className="font-semibold text-slate-900 dark:text-white flex items-center gap-1.5">
+          <CalendarIcon size={16} /> Tarama Geçmişi
         </h3>
       </div>
 
@@ -56,8 +58,9 @@ export default function ScanTimeline({ scans }) {
           <div className="space-y-2">
             <div className="flex items-start justify-between">
               <div>
-                <h4 className="font-medium text-slate-900 dark:text-white text-sm">
-                  {latestScan.source === 'local' ? '📂 Yerel Tarama' : '☁️ Drive Tarama'}
+                <h4 className="font-medium text-slate-900 dark:text-white text-sm flex items-center gap-1.5">
+                  {latestScan.source === 'local' ? <FolderIcon size={14} /> : <CloudIcon size={14} />}
+                  {latestScan.source === 'local' ? 'Yerel Tarama' : 'Drive Tarama'}
                 </h4>
                 <p className="text-xs text-slate-600 dark:text-slate-400 mt-1">
                   {formatDate(latestScan.completedAt)}
@@ -69,13 +72,14 @@ export default function ScanTimeline({ scans }) {
                 </p>
               </div>
               <span
-                className={`text-xs font-medium px-2 py-1 rounded ${
+                className={`inline-flex items-center gap-1 text-xs font-medium px-2 py-1 rounded ${
                   latestScan.status === 'completed'
                     ? 'bg-green-100 text-green-800'
                     : 'bg-yellow-100 text-yellow-800'
                 }`}
               >
-                {latestScan.status === 'completed' ? '✓ Tamamlandı' : '⏳ İşleniyor'}
+                {latestScan.status === 'completed' ? <CheckIcon size={12} /> : <HourglassIcon size={12} />}
+                {latestScan.status === 'completed' ? 'Tamamlandı' : 'İşleniyor'}
               </span>
             </div>
 
@@ -143,8 +147,9 @@ export default function ScanTimeline({ scans }) {
             <div className="absolute -left-2.5 top-1 w-3 h-3 bg-slate-300 dark:bg-slate-600 rounded-full"></div>
 
             <div>
-              <h4 className="font-medium text-slate-700 dark:text-slate-300 text-sm">
-                {scan.source === 'local' ? '📂 Yerel' : '☁️ Drive'}
+              <h4 className="font-medium text-slate-700 dark:text-slate-300 text-sm flex items-center gap-1.5">
+                {scan.source === 'local' ? <FolderIcon size={13} /> : <CloudIcon size={13} />}
+                {scan.source === 'local' ? 'Yerel' : 'Drive'}
               </h4>
               <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
                 {formatDate(scan.completedAt)}

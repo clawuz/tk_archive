@@ -8,7 +8,8 @@ service cloud.firestore {
 
     function isAllowedDomain() {
       return request.auth.token.email.matches('.*@tribalistanbul\\.com$')
-          || request.auth.token.email.matches('.*@twist\\.ddb\\.com$');
+          || request.auth.token.email.matches('.*@twist\\.ddb\\.com$')
+          || request.auth.token.email.matches('.*@thy\\.com$');
     }
 
     function hasRole(role) {
@@ -20,10 +21,19 @@ service cloud.firestore {
       return role == 'super_admin' || role == 'finance' || role == 'admin';
     }
 
-    // Users collection
+    // Users collection. Read: your own profile, or any if you're staff.
+    // Create/delete: staff only — new accounts come from requestAccess
+    // (Admin SDK, bypasses these rules) rather than a client-side create.
+    // Update: you can edit your own profile, but not your own `role` — that
+    // field is the one thing self-write must never touch, or any signed-in
+    // user could grant themselves admin. Staff can change anyone's role.
     match /users/{userId} {
       allow read: if isAuthenticated() && isAllowedDomain() && (request.auth.uid == userId || hasRole('admin') || hasRole('super_admin'));
-      allow write: if isAuthenticated() && isAllowedDomain() && (request.auth.uid == userId || hasRole('admin') || hasRole('super_admin'));
+      allow create, delete: if isAuthenticated() && isAllowedDomain() && (hasRole('admin') || hasRole('super_admin'));
+      allow update: if isAuthenticated() && isAllowedDomain() && (
+        (request.auth.uid == userId && request.resource.data.role == resource.data.role) ||
+        hasRole('admin') || hasRole('super_admin')
+      );
     }
 
     // Agency state — budget field restricted
@@ -58,10 +68,7 @@ service cloud.firestore {
     // would let a user forge a `completed` status, rewrite `results` to point
     // at another job's files, or reassign `userId` to steal a scan.
     match /scans/{scanId} {
-      // TODO: Proper IAM + security rules
-      // For now: open read for Cloud Functions testing
-      // Production: restore permission checks + service account rules
-      allow read: if true;
+      allow read: if isAuthenticated() && isAllowedDomain();
       allow write: if false;
     }
 
@@ -74,27 +81,43 @@ service cloud.firestore {
     // TK Archive DAM Collections
     // ========================================================================
 
-    // Files collection — DAM file metadata
-    // TEST MODE: public read AND write (no login screen wired in yet — see
-    // AuthProvider.jsx's hardcoded test-user). Restore the commented rule
-    // below once real Firebase Auth + Firestore user roles are wired in.
+    // Files collection — DAM file metadata. Read: any signed-in team member
+    // (the whole point of the archive). Write: admin/super_admin only — the
+    // scanner and Cloud Functions write via the Admin SDK regardless, which
+    // bypasses these rules entirely, so this only ever gates client writes
+    // (tag edits, rights edits) from the app itself.
     match /files/{fileId} {
-      allow read: if true;
-      allow write: if true; // TEST MODE - remove after real login is wired in
-      // allow write: if isAuthenticated() && isAllowedDomain() && (hasRole('admin') || hasRole('super_admin'));
+      allow read: if isAuthenticated() && isAllowedDomain();
+      allow write: if isAuthenticated() && isAllowedDomain() && (hasRole('admin') || hasRole('super_admin'));
+      // Any signed-in team member may ask for a video to be uploaded for
+      // playback ("Oynatmak için yükle") — exactly this one field, only to
+      // true. enrich.cjs (Admin SDK) does the work and clears it.
+      allow update: if isAuthenticated() && isAllowedDomain()
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['upload_requested'])
+        && request.resource.data.upload_requested == true;
     }
 
-    // Changes collection — incremental file changes
-    // Authenticated-only access; backend writes via scanner
+    // Changes collection — incremental file changes, written by the scanner
+    // via the Admin SDK only; no legitimate client write path.
     match /changes/{changeId} {
       allow read: if isAuthenticated() && isAllowedDomain();
-      allow write: if true; // TEST MODE - remove after debugging
+      allow write: if false;
     }
 
-    // Tags collection — managed tags vocabulary
-    // TEST MODE: public read access for verification
+    // AI worker heartbeat — written by tk-ai-engine/sprint3/ai_worker.py (Admin
+    // SDK, bypasses rules). The file panel reads it to warn when the Mac
+    // worker is offline while a "Otomatik Etiketle" request is waiting.
+    match /ai_worker_status/{docId} {
+      allow read: if isAuthenticated() && isAllowedDomain();
+      allow write: if false;
+    }
+
+    // Tags collection — managed tags vocabulary. Read: any signed-in team
+    // member (tag filter/autocomplete needs this). Write: admin/super_admin
+    // only, matching the UI's own canEdit gate on tag add/remove.
     match /tags/{tagId} {
-      allow read, write: if true;
+      allow read: if isAuthenticated() && isAllowedDomain();
+      allow write: if isAuthenticated() && isAllowedDomain() && (hasRole('admin') || hasRole('super_admin'));
     }
   }
 }

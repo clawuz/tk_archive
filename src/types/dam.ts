@@ -7,6 +7,7 @@ export type FileSource = 'local' | 'drive'
 export type ChangeType = 'new' | 'deleted' | 'modified' | 'moved'
 export type LicenseType = 'RF' | 'RM' | 'commercial' | 'custom'
 export type ScanStatus = 'queued' | 'running' | 'completed' | 'failed'
+export type MediaCategory = 'video' | 'image' | 'design' | 'document' | 'other'
 
 /**
  * File metadata document
@@ -37,6 +38,7 @@ export interface DAMFile {
 
   // Organization
   tags: string[]
+  searchTokens?: string[] // prefixes of name/tags/AI text words — see lib/searchTokens.cjs
   category?: string // video, image, design, document, etc
 
   // Rights & Compliance
@@ -68,6 +70,12 @@ export interface DAMFile {
 
   // Preview fields (Tasks 1-4)
   streamable?: boolean
+  // Light-scanned local videos are NOT in the GCS bucket until someone asks
+  // (enrich.cjs uploads when upload_requested is set). undefined = legacy
+  // doc, uploaded by the full scanner.
+  videoUploaded?: boolean
+  upload_requested?: boolean
+  uploadError?: string
   previewUrl?: string
   videoPreviewFrames?: Array<{
     timestamp: number
@@ -75,15 +83,38 @@ export interface DAMFile {
     frameNumber: number
   }>
 
-  // Auto-tagging (Claude Vision)
-  needs_tagging?: boolean // Flag for the tagNewFiles Cloud Function
-  tagSource?: string // 'claude-vision' | 'yolo-local' | other sources
+  // Auto-tagging — done by the local v2 vision worker on the Mac
+  // (tk-ai-engine/sprint3/ai_worker.py), not a Cloud Function: the Claude
+  // API credit ran out and local tagging is free.
+  needs_tagging?: boolean // Backlog flag: set by the scanner on new files, cleared by the worker
+  tag_requested?: boolean // Priority flag: set by the "Otomatik Etiketle" button, cleared by the worker when done
+  tagSource?: string // 'claude-vision' | 'local-vision' | other sources
   taggedAt?: number // timestamp when tags were auto-generated
   taggedBy?: string // userId who triggered tagging
+
+  // Result of the local vision worker (tk-ai-engine/sprint3/ai_worker.py)
+  ai?: {
+    status: 'completed' | 'failed' | 'skipped' | string
+    tags?: string[]
+    description?: string
+    onScreenText?: string[]
+    model?: string
+  }
 
   // 1-2 sentence description of visual content, generated alongside tags
   description?: string
   descriptionSource?: string
+
+  // Duplicates (tk-ai-engine/sprint3/mark_duplicates.py): files with identical
+  // content (same hash) are NOT deleted — only one representative is shown in
+  // the UI. Copies carry isDuplicate/duplicateOf; the representative carries
+  // duplicateCount/duplicateIds and the copies' names/folder tags in
+  // duplicateSearchText so searching a project the copy lives in still finds it.
+  isDuplicate?: boolean
+  duplicateOf?: string
+  duplicateCount?: number
+  duplicateIds?: string[]
+  duplicateSearchText?: string
 
   // Scan tracking
   scanId: string
@@ -197,7 +228,7 @@ export interface DAMSearchFilters {
   query?: string // full-text search
   sources?: FileSource[] // local, drive
   tags?: string[]
-  type?: string[] // mime types
+  type?: MediaCategory[] // broad type: video, image, design, document, other — see getMediaCategory()
   dateRange?: {
     from: number
     to: number

@@ -56,14 +56,17 @@ kalkis, inis, seyir, binis, ucak-dis-govde
 DESTİNASYON & MİRAS:
 istanbul, bogazici, kapadokya, gobeklitepe, global-destinasyon
 
+KAMPANYA / TEKLİF — görsel/video belirli bir THY kampanyasını/teklifini tanıtıyorsa:
+stopover
+
 MARKALAR (SADECE logo/renk net görünüyorsa):
 turkish-airlines, turkish-cargo, ajet, turkish-technic, miles-and-smiles, tkpay, youth-club, do-and-co, tgs
 
 TK STORE / MERCHANDISE — SADECE görsel gerçekten bir ürünün stüdyo/e-ticaret tarzı çekimiyse (izole arka plan, ürün paketin önünde/tek başına) kullan:
 tk-store, ucak-maketi, oyuncak, giyim
 
-SPONSORLUK & ÖDÜL (SADECE logo/grafik net okunuyorsa):
-milli-takim, uefa, euroleague, skytrax, apex, guinness
+SPONSORLUK & ÖDÜL — isimli marka/logo etiketleri (milli-takim, uefa, euroleague, skytrax, apex, guinness) SADECE logo/grafik net okunuyorsa kullanılsın. "odul" ise daha genel bir etiket — görselde bir ödül töreni, kupa, plaket, sertifika veya ödül sahnesi (podyum, takdim anı vb.) görülüyorsa, spesifik bir logo net okunmasa bile kullanılabilir:
+milli-takim, uefa, euroleague, skytrax, apex, guinness, odul
 
 PRODÜKSİYON İÇERİĞİ — bir reklam filmi, kurumsal film veya yayının kare/kapak görseliyse (sahne, oyuncu, el, ofis, masa gibi anlatı unsurları — ürün çekimi DEĞİL):
 kurumsal-film, reklam-filmi, kurumsal-yayin
@@ -299,6 +302,17 @@ exports.onFileNeedsTagging = functions
   .runWith({ secrets: ['ANTHROPIC_API_KEY'], timeoutSeconds: 120, memory: '512MB' })
   .firestore.document('files/{fileId}')
   .onWrite(async (change, context) => {
+    // DISABLED 2026-10-06: the Anthropic API credit ran out (every call
+    // failed with "credit balance is too low"), and automatic tagging moved
+    // to the free local v2 vision worker on the Mac (tk-ai-engine/sprint3/
+    // ai_worker.py), which polls the same `needs_tagging` flag this trigger
+    // used to react to — plus a `tag_requested` priority flag for the UI's
+    // "Otomatik Etiketle" button. Leaving this live would race the worker
+    // on every newly scanned file and burn failed API calls. To go back to
+    // Claude: remove this early return (and top up the API credit).
+    return null;
+
+    // eslint-disable-next-line no-unreachable
     const after = change.after.exists ? change.after.data() : null;
     if (!after || after.needs_tagging !== true) return null;
     if (after.tagSource === 'claude-vision') return null;

@@ -1,20 +1,21 @@
 import { useState, useEffect, useRef } from 'react'
-import { httpsCallable } from 'firebase/functions'
 import damService, { getScanHistory } from '../../services/damService'
-import { functions } from '../../firebase'
 import FileGallery from './FileGallery'
 import SearchFilters from './SearchFilters'
+import SearchBar from './SearchBar'
 import FileDetail from './FileDetail'
 import ScanTimeline from './ScanTimeline'
 import HeroAnimation from './HeroAnimation'
+import UsersPanel from './UsersPanel'
 import VideoPreview from './VideoPreview'
-import { useAuth } from '../../auth/AuthProvider'
-
-const SCAN_SOURCE_OPTIONS = [
-  { value: 'local', label: '📂 Yerel Klasör' },
-  { value: 'drive', label: '☁️ Google Drive' },
-  { value: 'both', label: '🔄 İkisi de' },
-]
+import { getImagePreviewUrl } from '../../services/streamingService'
+import {
+  getFavoriteIds,
+  getRecentlyViewedIds,
+  addRecentlyViewed,
+  onFavoritesChanged,
+} from '../../services/favoritesService'
+import { FolderIcon, CloudIcon } from '../icons'
 
 // Files displayed per page vs. how many raw Firestore docs are pulled per
 // fetch — batch > page so most page turns are served from an already-loaded
@@ -23,9 +24,6 @@ const PAGE_SIZE = 60
 const FETCH_BATCH_SIZE = 100
 
 export default function DAMDashboard() {
-  const { userProfile } = useAuth()
-  const isSuperAdmin = userProfile?.role === 'super_admin'
-
   // Gallery state — loadedFiles accumulates every filtered file fetched so
   // far across visited pages (an archive of thousands never loads at once;
   // Firestore is paged with a cursor, one or two batches ahead of the page
@@ -37,6 +35,14 @@ export default function DAMDashboard() {
   const [error, setError] = useState(null)
   // Archive-wide totals — independent of pagination/filters, see loadFileCounts.
   const [fileCounts, setFileCounts] = useState({ total: 0, local: 0, drive: 0 })
+  const [typeCounts, setTypeCounts] = useState(null)
+
+  // Hero view-switcher: 'all' runs the normal filtered/paginated query below;
+  // 'favorites'/'recent' short-circuit it and load a small, specific set of
+  // fileIds instead (see loadSpecialView) — see favoritesService.js for why
+  // this is localStorage-backed rather than a new Firestore collection.
+  const [activeView, setActiveView] = useState('all')
+  const [viewCounts, setViewCounts] = useState({ all: 0, favorites: 0, recent: 0 })
   const cursorRef = useRef(null)
   const rawExhaustedRef = useRef(false)
   // Bumped at the start of every loadFiles() call; fetchUntil's caller
@@ -50,6 +56,7 @@ export default function DAMDashboard() {
     query: '',
     sources: ['local', 'drive'],
     tags: [],
+    type: [],
     dateRange: null,
     licenseType: [],
     sortBy: 'modifiedAt',
@@ -60,33 +67,66 @@ export default function DAMDashboard() {
   const [selectedFile, setSelectedFile] = useState(null)
   const [showDetail, setShowDetail] = useState(false)
   const [showLightbox, setShowLightbox] = useState(false)
+  const [showUsers, setShowUsers] = useState(false)
 
-  // Scan timeline (sidebar)
+  // Scan timeline (sidebar) — read-only, sourced from the `scans` collection
+  // that the local CLI scanners write to directly (there is no in-app scan
+  // trigger).
   const [scanHistory, setScanHistory] = useState([])
 
-  // Scan control state
-  const [currentScan, setCurrentScan] = useState(null)
-  const [isScanning, setIsScanning] = useState(false)
-  const [scanSource, setScanSource] = useState('both')
-  const [forceFlag, setForceFlag] = useState(false)
-  const [archiveRoot, setArchiveRoot] = useState('/Users/okilavuz/Desktop/Omer/TK-2026')
-  const [scanError, setScanError] = useState(null)
-
-  // Load the first page whenever filters change
+  // Load the first page whenever filters change, or the hero tab switches —
+  // 'all' runs the real filtered query; 'favorites'/'recent' load their own
+  // small fixed set instead (see loadSpecialView).
   useEffect(() => {
-    loadFiles()
-  }, [filters])
+    if (activeView === 'all') {
+      loadFiles()
+    } else {
+      loadSpecialView(activeView)
+    }
+  }, [filters, activeView])
 
   // Load scan history on mount
   useEffect(() => {
     loadScanHistory()
   }, [])
 
+  // Escape closes the detail modal — but not while the lightbox is layered
+  // on top of it (showLightbox true), so Escape closes the topmost thing
+  // first instead of both at once.
+  useEffect(() => {
+    if (!showDetail || showLightbox) return
+    function handleKey(e) {
+      if (e.key === 'Escape') setShowDetail(false)
+    }
+    window.addEventListener('keydown', handleKey)
+    return () => window.removeEventListener('keydown', handleKey)
+  }, [showDetail, showLightbox])
+
   // Archive-wide totals, independent of filters/pagination — loaded once,
   // then refreshed whenever a scan finishes (new files may have appeared).
   useEffect(() => {
     loadFileCounts()
+    loadTypeCounts()
   }, [])
+
+  // Favorites count in the hero tab needs to react to stars toggled from
+  // inside the gallery cards, not just on mount.
+  useEffect(() => {
+    refreshViewCounts()
+    return onFavoritesChanged(refreshViewCounts)
+  }, [])
+
+  useEffect(() => {
+    setViewCounts((prev) => ({ ...prev, all: fileCounts.total }))
+  }, [fileCounts.total])
+
+  function refreshViewCounts() {
+    setViewCounts((prev) => ({
+      ...prev,
+      favorites: getFavoriteIds().length,
+      recent: getRecentlyViewedIds().length,
+    }))
+  }
 
   async function loadFileCounts() {
     try {
@@ -95,6 +135,44 @@ export default function DAMDashboard() {
     } catch (err) {
       console.error('Dosya sayıları alınamadı:', err)
     }
+  }
+
+  async function loadTypeCounts() {
+    try {
+      const counts = await damService.getFileTypeCounts()
+      setTypeCounts(counts)
+    } catch (err) {
+      console.error('Tür kırılımı alınamadı:', err)
+    }
+  }
+
+  // Favorites/Recently-Viewed aren't a Firestore filter — they're a fixed,
+  // small list of fileIds from localStorage — so this bypasses the
+  // cursor-based fetchUntil/ensurePage pagination entirely rather than
+  // trying to express "these 30 specific IDs" as a searchFiles() query.
+  async function loadSpecialView(view) {
+    const myRequestId = ++requestIdRef.current
+    setPageIndex(0)
+    setLoading(true)
+    try {
+      const ids = view === 'favorites' ? getFavoriteIds() : getRecentlyViewedIds()
+      const files = (await Promise.all(ids.map((id) => damService.getFile(id)))).filter(Boolean)
+      if (myRequestId !== requestIdRef.current) return
+      cursorRef.current = null
+      rawExhaustedRef.current = true
+      setLoadedFiles(files)
+      setError(null)
+    } catch (err) {
+      if (myRequestId !== requestIdRef.current) return
+      setError(err.message || 'Dosyalar yüklenemedi')
+      console.error(err)
+    } finally {
+      if (myRequestId === requestIdRef.current) setLoading(false)
+    }
+  }
+
+  function handleViewChange(view) {
+    setActiveView(view)
   }
 
   // Fetches raw batches from Firestore (via damService.searchFiles) — each
@@ -178,75 +256,16 @@ export default function DAMDashboard() {
     try {
       const scanList = await getScanHistory(10)
       setScanHistory(scanList)
-      // Reflect the latest known scan in the status card unless a scan
-      // triggered by this session is actively running.
-      if (!isScanning) {
-        setCurrentScan(scanList[0] || null)
-      }
     } catch (err) {
       console.error('Tarama geçmişi yüklenemedi:', err)
     }
   }
 
-  async function handleStartScan() {
-    if (isScanning) return
-    if (!archiveRoot.trim()) {
-      setScanError('Lütfen arşiv kök dizinini belirtiniz')
-      return
-    }
-
-    setIsScanning(true)
-    setScanError(null)
-
-    try {
-      const startScan = httpsCallable(functions, 'startScan')
-      const result = await startScan({
-        archiveRoot: archiveRoot.trim(),
-        scanType: scanSource
-      })
-
-      // Poll for status
-      const getScanStatus = httpsCallable(functions, 'getScanStatus')
-      const pollInterval = setInterval(async () => {
-        try {
-          const statusResult = await getScanStatus({ jobId: result.data.jobId })
-
-          if (statusResult.data.status === 'completed' || statusResult.data.status === 'failed') {
-            clearInterval(pollInterval)
-            setIsScanning(false)
-
-            if (statusResult.data.status === 'completed') {
-              // Refresh scan history
-              const history = await getScanHistory()
-              setScanHistory(history)
-              setCurrentScan(history[0] || null)
-              await loadFiles()
-              await loadFileCounts()
-            } else {
-              setScanError('Scan failed: ' + statusResult.data.error)
-            }
-          }
-        } catch (pollErr) {
-          console.error('Poll error:', pollErr)
-        }
-      }, 2000) // Poll every 2 seconds
-    } catch (err) {
-      setScanError(err.message || 'Tarama başarısız oldu')
-      setIsScanning(false)
-    }
-  }
-
-  function handleRerunScan(scan) {
-    if (isScanning) return
-    setScanSource(scan.source || scan.scanType)
-    setArchiveRoot(scan.archiveRoot || '')
-    // Defer to next tick so the state settles first.
-    setTimeout(() => handleStartScan(), 0)
-  }
-
   function handleFileSelect(file) {
     setSelectedFile(file)
     setShowDetail(true)
+    addRecentlyViewed(file.fileId)
+    if (activeView === 'recent') refreshViewCounts()
   }
 
   // FileDetail writes tag/rights edits straight to Firestore, but
@@ -260,54 +279,62 @@ export default function DAMDashboard() {
   }
 
   function handleFilterChange(newFilters) {
-    setFilters({ ...filters, ...newFilters })
+    // Functional update: the search box debounces its onChange (350ms) while
+    // the tag checkboxes fire immediately, so a debounced callback scheduled
+    // before a checkbox click can still be holding a stale `filters` closure
+    // when it commits — merging against that stale value silently dropped
+    // whichever filter changed first (e.g. a just-checked tag reverting to
+    // unchecked). Merging against the latest state instead of the closure
+    // fixes that regardless of ordering.
+    setFilters((prev) => ({ ...prev, ...newFilters }))
   }
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-50 to-slate-100 dark:from-slate-900 dark:to-slate-950">
       {/* Header — the animation carries the title, so this is the only header block */}
       <div className="sticky top-0 z-40 border-b border-slate-200 dark:border-slate-700 shadow-sm">
-        <HeroAnimation height={120} />
+        <HeroAnimation
+          activeView={activeView}
+          onViewChange={handleViewChange}
+          viewCounts={viewCounts}
+          onOpenUsers={() => setShowUsers(true)}
+        />
       </div>
 
-      {/* Scan Control Section — running a scan touches every file in the
-          archive and can trigger real cost (see the auto-tagging incident
-          this system has already had once), so it's restricted to
-          super_admin rather than any authenticated admin. */}
-      {isSuperAdmin && (
-        <div className="max-w-7xl mx-auto px-6 pt-8">
-          <ScanControlPanel
-            currentScan={currentScan}
-            isScanning={isScanning}
-            scanSource={scanSource}
-            forceFlag={forceFlag}
-            archiveRoot={archiveRoot}
-            scanError={scanError}
-            scanHistory={scanHistory}
-            onSourceChange={setScanSource}
-            onForceFlagChange={setForceFlag}
-            onArchiveRootChange={setArchiveRoot}
-            onStartScan={handleStartScan}
-            onRerunScan={handleRerunScan}
-          />
-        </div>
-      )}
+      {/* Archive-wide stats — total + source breakdown + type tiles. Real
+          counts (getFileCounts/getFileTypeCounts), just surfaced prominently
+          instead of buried mid-page — see the "üst bilgi şeridi" plan. */}
+      <div className="max-w-7xl mx-auto px-6 pt-8">
+        <ArchiveStatsBar fileCounts={fileCounts} typeCounts={typeCounts} />
+      </div>
+
+      {/* The page's dominant search element — full width, visible to every
+          user (unlike the scan panel below, which is super_admin-only).
+          Secondary filters (source/tags/date/license) stay in the sidebar. */}
+      <div className="max-w-7xl mx-auto px-6 pt-6">
+        <SearchBar filters={filters} onChange={handleFilterChange} />
+      </div>
 
       {/* Main Layout */}
       <div className="max-w-7xl mx-auto px-6 py-8 grid grid-cols-1 lg:grid-cols-4 gap-6">
         {/* Left Sidebar: Filters + Timeline */}
         <div className="lg:col-span-1 space-y-6">
           <SearchFilters filters={filters} onChange={handleFilterChange} />
-          <ScanTimeline scans={scanHistory} />
+          {/* Mobile stacks this sidebar above the gallery (grid-cols-1), so
+              the scan history ate the whole first screen before any files
+              were visible — desktop-only where it sits beside the gallery
+              instead of on top of it. */}
+          <div className="hidden lg:block">
+            <ScanTimeline scans={scanHistory} />
+          </div>
         </div>
 
-        {/* Center: File Gallery — widens to reclaim the detail panel's column when it's closed.
-            Kept at a fixed 2/1 split regardless of file type: FileGallery's own thumbnail grid
-            uses viewport-width breakpoints (sm:/lg:grid-cols-N), not container queries, so
-            shrinking its column further makes it try to fit the same column count into less
-            space and the thumbnails start overlapping. Drive videos get a wide, unconstrained
-            player via the lightbox instead of trying to widen this column — see FileDetail.jsx. */}
-        <div className={showDetail && selectedFile ? 'lg:col-span-2' : 'lg:col-span-3'}>
+        {/* Center: File Gallery — full width always now that the detail view
+            is an overlay modal (see below) rather than a column that used to
+            steal grid space; the "does it fit" tension with FileGallery's
+            viewport-width breakpoints (sm:/lg:grid-cols-N) this note used to
+            describe no longer applies. */}
+        <div className="lg:col-span-3">
           {error && (
             <div className="mb-4 p-4 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg">
               <p className="text-sm text-red-800 dark:text-red-200">{error}</p>
@@ -334,10 +361,9 @@ export default function DAMDashboard() {
           {!loading && loadedFiles.length > 0 && (
             <FileGallery
               files={pageFiles}
-              fileCounts={fileCounts}
               onFileSelect={handleFileSelect}
               loading={loading}
-              onRefresh={loadFiles}
+              onRefresh={() => (activeView === 'all' ? loadFiles() : loadSpecialView(activeView))}
               pageIndex={pageIndex}
               hasNextPage={hasNextPage}
               hasPrevPage={hasPrevPage}
@@ -348,9 +374,22 @@ export default function DAMDashboard() {
           )}
         </div>
 
-        {/* Right Sidebar: File Detail */}
-        {showDetail && selectedFile && (
-          <div className="lg:col-span-1">
+      </div>
+
+      {showUsers && <UsersPanel onClose={() => setShowUsers(false)} />}
+
+      {/* File Detail — a large modal over the result grid rather than a
+          column that used to shrink the gallery and force scrolling back
+          up to see it change. Search/filter state underneath is untouched,
+          so closing this returns to exactly where browsing left off. */}
+      {showDetail && selectedFile && (
+        <div
+          className="fixed inset-0 z-50 flex items-start sm:items-center justify-center bg-black/50 p-0 sm:p-6 overflow-y-auto"
+          onClick={(e) => {
+            if (e.target === e.currentTarget) setShowDetail(false)
+          }}
+        >
+          <div className="w-full sm:max-w-3xl sm:my-8 bg-white dark:bg-slate-800 sm:rounded-xl shadow-2xl min-h-screen sm:min-h-0 sm:max-h-[88vh] flex flex-col">
             <FileDetail
               file={selectedFile}
               onClose={() => setShowDetail(false)}
@@ -359,8 +398,8 @@ export default function DAMDashboard() {
               onFileUpdate={handleFileUpdate}
             />
           </div>
-        )}
-      </div>
+        </div>
+      )}
 
       {/* Lightbox Modal */}
       {showLightbox && selectedFile && (
@@ -373,287 +412,83 @@ export default function DAMDashboard() {
   )
 }
 
-// ============================================================================
-// Scan Control Panel — status card, start-scan controls, recent scans
-// ============================================================================
+const TYPE_TILES = [
+  { key: 'video', label: 'Video' },
+  { key: 'image', label: 'Görsel' },
+  { key: 'psd', label: 'PSD' },
+  { key: 'other', label: 'Diğer' },
+]
 
-const SCAN_STATUS_STYLES = {
-  running: {
-    label: '⏳ Çalışıyor',
-    badge: 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900/30 dark:text-yellow-300',
-  },
-  queued: {
-    label: '⏸ Sırada',
-    badge: 'bg-slate-100 text-slate-700 dark:bg-slate-700 dark:text-slate-300',
-  },
-  completed: {
-    label: '✓ Tamamlandı',
-    badge: 'bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-300',
-  },
-  failed: {
-    label: '✕ Başarısız',
-    badge: 'bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-300',
-  },
-}
-
-const SCAN_SOURCE_LABELS = {
-  local: '📂 Yerel Klasör',
-  drive: '☁️ Google Drive',
-  both: '🔄 Yerel + Drive',
-}
-
-function formatScanTimestamp(ms) {
-  if (!ms) return '—'
-  return new Date(ms).toLocaleString('tr-TR', {
-    day: 'numeric',
-    month: 'short',
-    hour: '2-digit',
-    minute: '2-digit',
-  })
-}
-
-function formatScanDuration(ms) {
-  if (!ms && ms !== 0) return null
-  const seconds = Math.round(ms / 1000)
-  if (seconds < 60) return `${seconds}sn`
-  const minutes = Math.floor(seconds / 60)
-  const remainingSeconds = seconds % 60
-  return `${minutes}dk ${remainingSeconds}sn`
-}
-
-function ScanControlPanel({
-  currentScan,
-  isScanning,
-  scanSource,
-  forceFlag,
-  archiveRoot,
-  scanError,
-  scanHistory,
-  onSourceChange,
-  onForceFlagChange,
-  onArchiveRootChange,
-  onStartScan,
-  onRerunScan,
-}) {
-  const recentScans = (scanHistory || []).slice(0, 5)
-
+function ArchiveStatsBar({ fileCounts, typeCounts }) {
   return (
-    <div className="bg-white dark:bg-slate-800 rounded-lg border border-slate-200 dark:border-slate-700 overflow-hidden">
-      <div className="px-4 py-3 border-b border-slate-200 dark:border-slate-700">
-        <h3 className="font-semibold text-slate-900 dark:text-white">
-          🔍 Tarama Kontrolü
-        </h3>
-      </div>
-
-      <div className="p-4 grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* Scan Status Card */}
-        <div className="lg:col-span-1">
-          <ScanStatusCard scan={currentScan} />
-        </div>
-
-        {/* Start Scan Controls */}
-        <div className="lg:col-span-1">
-          <h4 className="text-sm font-medium text-slate-900 dark:text-white mb-3">
-            Yeni Tarama Başlat
-          </h4>
-
-          <div className="space-y-3">
-            <div>
-              <label className="block text-xs font-medium text-slate-600 dark:text-slate-400 mb-1">
-                Arşiv Kök Dizini *
-              </label>
-              <input
-                type="text"
-                value={archiveRoot}
-                onChange={(e) => onArchiveRootChange(e.target.value)}
-                disabled={isScanning}
-                placeholder="Örn: /Volumes/Arsiv"
-                className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-700 border border-slate-300 dark:border-slate-600 rounded-lg text-slate-900 dark:text-white text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-50 disabled:cursor-not-allowed placeholder-slate-400"
-              />
-              <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
-                Sonradan değiştirebilirsiniz
-              </p>
-            </div>
-
-            <div>
-              <label className="block text-xs font-medium text-slate-600 dark:text-slate-400 mb-1">
-                Kaynak
-              </label>
-              <select
-                value={scanSource}
-                onChange={(e) => onSourceChange(e.target.value)}
-                disabled={isScanning}
-                className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-700 border border-slate-300 dark:border-slate-600 rounded-lg text-slate-900 dark:text-white text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                {SCAN_SOURCE_OPTIONS.map((opt) => (
-                  <option key={opt.value} value={opt.value}>
-                    {opt.label}
-                  </option>
-                ))}
-              </select>
-            </div>
-
-            <label className="flex items-center">
-              <input
-                type="checkbox"
-                checked={forceFlag}
-                onChange={(e) => onForceFlagChange(e.target.checked)}
-                disabled={isScanning}
-                className="rounded border-slate-300 text-blue-600 focus:ring-blue-500 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
-              />
-              <span className="ml-2 text-sm text-slate-700 dark:text-slate-300">
-                Tam Tarama (Force)
-              </span>
-            </label>
-
-            <button
-              onClick={onStartScan}
-              disabled={isScanning}
-              className="w-full flex items-center justify-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:bg-slate-300 dark:disabled:bg-slate-700 disabled:cursor-not-allowed text-white text-sm font-medium rounded-lg transition"
-            >
-              {isScanning ? (
-                <>
-                  <span className="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></span>
-                  Taranıyor...
-                </>
-              ) : (
-                'Taramayı Başlat'
-              )}
-            </button>
-
-            {scanError && (
-              <div className="p-3 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg">
-                <p className="text-xs text-red-800 dark:text-red-200">
-                  {scanError}
-                </p>
-              </div>
-            )}
-          </div>
-        </div>
-
-        {/* Recent Scans List */}
-        <div className="lg:col-span-1">
-          <h4 className="text-sm font-medium text-slate-900 dark:text-white mb-3">
-            Son Taramalar
-          </h4>
-
-          {recentScans.length === 0 && (
-            <p className="text-sm text-slate-500 dark:text-slate-400">
-              Henüz tarama yapılmadı
-            </p>
-          )}
-
-          {recentScans.length > 0 && (
-            <ul className="space-y-2">
-              {recentScans.map((scan, idx) => {
-                const style = SCAN_STATUS_STYLES[scan.status] || SCAN_STATUS_STYLES.queued
-                return (
-                  <li
-                    key={scan.scanId || idx}
-                    className="flex items-center justify-between gap-2 p-2 rounded-lg border border-slate-200 dark:border-slate-700"
-                  >
-                    <div className="min-w-0">
-                      <p className="text-xs font-medium text-slate-900 dark:text-white truncate">
-                        {SCAN_SOURCE_LABELS[scan.source] || scan.source}
-                      </p>
-                      <p className="text-xs text-slate-500 dark:text-slate-400">
-                        {formatScanTimestamp(scan.completedAt || scan.startedAt)}
-                        {scan.results ? ` • ${scan.results.totalFiles} dosya` : ''}
-                      </p>
-                    </div>
-                    <button
-                      onClick={() => onRerunScan(scan)}
-                      disabled={isScanning}
-                      title="Aynı kaynakla yeniden tara"
-                      className="shrink-0 text-xs text-blue-600 dark:text-blue-400 hover:underline disabled:opacity-50 disabled:cursor-not-allowed disabled:no-underline"
-                    >
-                      ↻ Tekrar Tara
-                    </button>
-                  </li>
-                )
-              })}
-            </ul>
-          )}
-        </div>
-      </div>
-    </div>
-  )
-}
-
-function ScanStatusCard({ scan }) {
-  if (!scan) {
-    return (
-      <div className="h-full flex flex-col justify-center text-sm text-slate-500 dark:text-slate-400 border border-dashed border-slate-300 dark:border-slate-600 rounded-lg p-4">
-        Henüz tarama yapılmadı. Başlamak için "Taramayı Başlat" düğmesini kullanın.
-      </div>
-    )
-  }
-
-  const style = SCAN_STATUS_STYLES[scan.status] || SCAN_STATUS_STYLES.queued
-  const duration = formatScanDuration(scan.duration)
-
-  return (
-    <div className="border border-slate-200 dark:border-slate-700 rounded-lg p-4 h-full">
-      <div className="flex items-start justify-between mb-2">
+    <div className="bg-white dark:bg-slate-800 rounded-lg border border-slate-200 dark:border-slate-700 p-6 shadow-sm">
+      <div className="flex flex-wrap items-baseline gap-x-8 gap-y-4 mb-5">
         <div>
-          <p className="text-sm font-medium text-slate-900 dark:text-white">
-            {SCAN_SOURCE_LABELS[scan.source] || scan.source}
-          </p>
-          <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
-            Başlangıç: {formatScanTimestamp(scan.startedAt)}
-          </p>
+          <div className="text-4xl font-bold text-slate-900 dark:text-white leading-none">
+            {fileCounts.total.toLocaleString('tr-TR')}
+          </div>
+          <div className="text-xs font-mono uppercase tracking-wide text-slate-400 dark:text-slate-500 mt-1">
+            Toplam Varlık
+          </div>
         </div>
-        <span className={`text-xs font-medium px-2 py-1 rounded shrink-0 ${style.badge}`}>
-          {style.label}
-        </span>
+        <div className="flex gap-6 ml-auto">
+          <div className="text-right">
+            <div className="text-xl font-semibold text-slate-900 dark:text-white">
+              {fileCounts.local.toLocaleString('tr-TR')}
+            </div>
+            <div className="flex items-center justify-end gap-1 text-[10px] font-mono uppercase tracking-wide text-slate-400 dark:text-slate-500">
+              <FolderIcon size={11} /> Yerel
+            </div>
+          </div>
+          <div className="text-right">
+            <div className="text-xl font-semibold text-slate-900 dark:text-white">
+              {fileCounts.drive.toLocaleString('tr-TR')}
+            </div>
+            <div className="flex items-center justify-end gap-1 text-[10px] font-mono uppercase tracking-wide text-slate-400 dark:text-slate-500">
+              <CloudIcon size={11} /> Drive
+            </div>
+          </div>
+        </div>
       </div>
 
-      {scan.status === 'running' && (
-        <div className="mt-3">
-          <div className="w-full bg-slate-100 dark:bg-slate-700 rounded-full h-1.5 overflow-hidden">
-            <div className="bg-blue-500 h-1.5 rounded-full w-1/3 animate-pulse"></div>
-          </div>
-          <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
-            Tarama sürüyor, bu işlem birkaç dakika alabilir...
-          </p>
-        </div>
-      )}
-
-      {scan.status === 'completed' && scan.results && (
-        <div className="mt-3 grid grid-cols-2 gap-2 text-xs">
-          <div className="bg-slate-50 dark:bg-slate-700/50 rounded p-2">
-            <div className="font-semibold text-slate-900 dark:text-white">
-              {scan.results.totalFiles}
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
+        {TYPE_TILES.map((tile) => (
+          <div
+            key={tile.key}
+            className="border border-slate-200 dark:border-slate-700 rounded-lg px-3.5 py-2.5"
+          >
+            <div className="text-lg font-mono font-semibold text-slate-900 dark:text-white">
+              {typeCounts ? typeCounts[tile.key].toLocaleString('tr-TR') : '—'}
             </div>
-            <div className="text-slate-500 dark:text-slate-400">Toplam dosya</div>
+            <div className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">{tile.label}</div>
           </div>
-          <div className="bg-green-50 dark:bg-green-900/20 rounded p-2">
-            <div className="font-semibold text-green-800 dark:text-green-300">
-              +{scan.results.newFiles}
-            </div>
-            <div className="text-green-700 dark:text-green-400">Yeni dosya</div>
-          </div>
-          {duration && (
-            <div className="col-span-2 text-slate-500 dark:text-slate-400">
-              Süre: {duration}
-            </div>
-          )}
-        </div>
-      )}
-
-      {scan.status === 'failed' && (
-        <p className="mt-2 text-xs text-red-700 dark:text-red-300">
-          {scan.errors && scan.errors.length > 0
-            ? scan.errors[0]
-            : 'Tarama sırasında bir hata oluştu.'}
-        </p>
-      )}
+        ))}
+      </div>
     </div>
   )
 }
 
 // File Preview Component (Lightbox)
 function FilePreview({ file, onClose }) {
+  useEffect(() => {
+    function handleKey(e) {
+      if (e.key === 'Escape') onClose()
+    }
+    window.addEventListener('keydown', handleKey)
+    return () => window.removeEventListener('keydown', handleKey)
+  }, [onClose])
+
+  // Prefer the high-res Storage upload (see getImagePreviewUrl) over the
+  // small inline thumbnail — falls back to the thumbnail on error, since
+  // not every image has a high-res preview yet (only ones scanned/backfilled
+  // after this was added). Reset whenever the file changes, since this
+  // component isn't remounted when selectedFile changes while the lightbox
+  // stays open (no key prop on <FilePreview> in the parent).
+  const [imgSrc, setImgSrc] = useState(() => getImagePreviewUrl(file) || file.thumbnailUrl)
+  useEffect(() => {
+    setImgSrc(getImagePreviewUrl(file) || file.thumbnailUrl)
+  }, [file])
+
   return (
     <div
       className="fixed inset-0 bg-black/80 z-50 flex items-center justify-center p-4"
@@ -685,10 +520,29 @@ function FilePreview({ file, onClose }) {
 
         {/* Preview based on file type */}
         {file.type.startsWith('image/') && (
+          // Two bugs here in sequence, both from the same root cause: the
+          // modal box (className below this comment's parent) has no
+          // explicit height, only max-h-[90vh] — a percentage height
+          // against that undefined-height ancestor resolves inconsistently.
+          // First version used h-full: resolved too large in practice, so
+          // overflow-hidden on the box clipped it — a crop, not a fit.
+          // Fixing that by switching to max-h-[80vh] alone (no explicit
+          // height demand) overcorrected: these thumbnails are tiny
+          // (240px, see scanner.cjs's qlmanage -s 240) and an <img> never
+          // upscales past its intrinsic size on its own, so it rendered
+          // small instead of filling the available preview area.
+          // h-[80vh] (a literal viewport value, not a percentage — sidesteps
+          // the undefined-parent problem entirely) paired with object-contain
+          // gives the image a real, large box to scale into either
+          // direction: shrinks a big image to fit, enlarges a small
+          // thumbnail to fill the space, crops nothing either way.
           <img
-            src={file.thumbnailUrl}
+            src={imgSrc}
+            onError={() => {
+              if (imgSrc !== file.thumbnailUrl) setImgSrc(file.thumbnailUrl)
+            }}
             alt={file.name}
-            className="w-full h-full object-contain"
+            className="w-full h-[80vh] object-contain"
           />
         )}
 
@@ -721,11 +575,15 @@ function FilePreview({ file, onClose }) {
             </div>
           )}
 
-        {/* File info overlay */}
-        <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/80 to-transparent p-4 text-white">
-          <h3 className="font-semibold">{file.name}</h3>
-          <p className="text-sm opacity-75">{file.sizeFormatted}</p>
-        </div>
+        {/* File info overlay — skipped for video: it sat on top of the
+            player's own controls/chrome and duplicated info already shown
+            in the FileDetail panel behind this lightbox. */}
+        {!file.type.startsWith('video/') && (
+          <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/80 to-transparent p-4 text-white">
+            <h3 className="font-semibold">{file.name}</h3>
+            <p className="text-sm opacity-75">{file.sizeFormatted}</p>
+          </div>
+        )}
       </div>
     </div>
   )

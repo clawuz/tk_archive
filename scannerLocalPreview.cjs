@@ -7,7 +7,7 @@ const admin = require('firebase-admin');
 
 const { extractAutoTags } = require('./lib/autoTags.cjs');
 const { isVideoFile, extractVideoFrames } = require('./lib/videoFrames.cjs');
-const { generateSearchTokens } = require('./lib/searchTokens.cjs');
+const { generateSearchTokens, aiSearchText } = require('./lib/searchTokens.cjs');
 const { getDriveClient } = require('./lib/driveOAuth.cjs');
 const { uploadPreview } = require('./lib/drivePreviewUpload.cjs');
 const { generatePreviewIfNeeded, runWithConcurrency } = require('./lib/previewTranscode.cjs');
@@ -154,11 +154,11 @@ async function processFile(fullPath, driveClient, scanId) {
     // Preserve prior curation on re-runs, same rationale as scanner.cjs.
     if (existingSnap.exists) {
       const existing = existingSnap.data();
-      const PRESERVE_FIELDS = ['tags', 'needs_tagging', 'tagSource', 'taggedAt', 'description', 'descriptionSource', 'copyright', 'license', 'usage'];
+      const PRESERVE_FIELDS = ['tags', 'needs_tagging', 'tagSource', 'taggedAt', 'ai', 'description', 'descriptionSource', 'copyright', 'license', 'usage'];
       for (const field of PRESERVE_FIELDS) {
         if (existing[field] !== undefined) fileDoc[field] = existing[field];
       }
-      fileDoc.searchTokens = generateSearchTokens(fileDoc.name, fileDoc.tags);
+      fileDoc.searchTokens = generateSearchTokens(fileDoc.name, fileDoc.tags, aiSearchText(fileDoc.ai));
     }
 
     await db.collection('files').doc(fileId).set(fileDoc);

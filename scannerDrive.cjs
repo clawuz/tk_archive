@@ -10,7 +10,7 @@ const path = require('path');
 const { google } = require('googleapis');
 const admin = require('firebase-admin');
 const { extractAutoTags } = require('./lib/autoTags.cjs');
-const { generateSearchTokens } = require('./lib/searchTokens.cjs');
+const { generateSearchTokens, aiSearchText } = require('./lib/searchTokens.cjs');
 
 console.log('📦 Loading firebase-admin...');
 const serviceAccount = JSON.parse(
@@ -234,7 +234,7 @@ async function run() {
     // re-flag needs_tagging, re-billing Claude Vision on every re-scan.
     console.log(`🔎 Checking for existing curation to preserve...`);
     const PRESERVE_FIELDS = [
-      'tags', 'needs_tagging', 'tagSource', 'taggedAt',
+      'tags', 'needs_tagging', 'tagSource', 'taggedAt', 'ai',
       'description', 'descriptionSource', 'copyright', 'license', 'usage',
       // Carries forward frames from an earlier one-off pass, if any exist —
       // this scanner itself never downloads a video to produce them.
@@ -259,7 +259,7 @@ async function run() {
       // Preserving may have swapped in curated tags (manually added after
       // the auto-tag pass) — recompute searchTokens from whichever tags
       // actually ended up on the file, not the pre-preserve auto tags.
-      file.searchTokens = generateSearchTokens(file.name, file.tags);
+      file.searchTokens = generateSearchTokens(file.name, file.tags, aiSearchText(file.ai));
     }
     console.log(`  Preserved curation on ${existingByFileId.size} already-scanned files\n`);
 

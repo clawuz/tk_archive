@@ -18,6 +18,7 @@ import {
   limit,
   startAfter,
   getCountFromServer,
+  onSnapshot,
   Timestamp,
   QueryDocumentSnapshot,
   DocumentData,
@@ -30,6 +31,7 @@ import {
   DAMTag,
   DAMSearchFilters,
   DAMFileUI,
+  MediaCategory,
 } from '../types/dam'
 
 // Collection references
@@ -45,15 +47,21 @@ const TAGS_COLLECTION = 'tags'
  * (see addTagsToFile/removeTagFromFile) rather than only at scan time, so a
  * tag added through the UI is searchable immediately, not just after a rescan.
  */
-function generateSearchTokens(name: string, tags: string[]): string[] {
+function generateSearchTokens(name: string, tags: string[], extraText = ''): string[] {
   const words = new Set<string>()
-  const addWords = (str: string) => {
-    for (const w of (str || '').toLowerCase().split(/[^a-z0-9çğıöşüâîû]+/i)) {
-      if (w.length >= 2) words.add(w)
-    }
+  const wordsOf = (str: string) =>
+    (str || '').toLowerCase().split(/[^a-z0-9çğıöşüâîû]+/i).filter((w) => w.length >= 2)
+  for (const w of wordsOf(name)) words.add(w)
+  for (const t of tags || []) {
+    for (const w of wordsOf(t.replace(/-/g, ' '))) words.add(w)
   }
-  addWords(name)
-  for (const t of tags || []) addWords(t.replace(/-/g, ' '))
+  // AI description + on-screen text, capped like lib/searchTokens.cjs.
+  let aiWords = 0
+  for (const w of wordsOf(extraText)) {
+    if (w.length > 24 || words.has(w)) continue
+    words.add(w)
+    if (++aiWords >= 300) break
+  }
 
   const tokens = new Set<string>()
   for (const w of words) {
@@ -62,6 +70,36 @@ function generateSearchTokens(name: string, tags: string[]): string[] {
     }
   }
   return Array.from(tokens)
+}
+
+/** Description + on-screen text the local vision worker wrote (see lib/searchTokens.cjs). */
+function aiSearchText(ai?: DAMFile['ai']): string {
+  if (!ai) return ''
+  return [ai.description, ...(ai.onScreenText || [])].filter((p) => typeof p === 'string').join(' ')
+}
+
+// Mirrors the scanners' own extension lists (scannerLocalPreview.cjs,
+// scannerLocalImages.cjs) — see the comment on getFileTypeCounts() below,
+// the archive-wide stats bar this file also powers.
+const VIDEO_EXTENSIONS = ['mp4', 'mov', 'avi', 'mkv', 'webm', 'flv', 'wmv', 'mts', 'm2ts']
+const IMAGE_EXTENSIONS = ['jpg', 'jpeg', 'png', 'gif', 'webp', 'tiff', 'tif', 'bmp', 'heic', 'heif', 'svg', 'arw', 'cr2', 'nef', 'dng']
+const DESIGN_EXTENSIONS = ['psd', 'ai', 'eps']
+const DOCUMENT_EXTENSIONS = ['pdf', 'doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx', 'txt']
+
+/**
+ * Buckets a file's extension into a broad category for the "Dosya Türü"
+ * search filter — the raw `type` (MIME) field has 25+ distinct values
+ * across the archive (checked against a 20k-file sample, 2026-09-24), too
+ * granular for users to pick from, so this groups by intent instead
+ * (Video/Fotoğraf/Tasarım/Belge/Diğer).
+ */
+function getMediaCategory(extension: string): MediaCategory {
+  const ext = (extension || '').toLowerCase()
+  if (VIDEO_EXTENSIONS.includes(ext)) return 'video'
+  if (IMAGE_EXTENSIONS.includes(ext)) return 'image'
+  if (DESIGN_EXTENSIONS.includes(ext)) return 'design'
+  if (DOCUMENT_EXTENSIONS.includes(ext)) return 'document'
+  return 'other'
 }
 
 /**
@@ -157,13 +195,29 @@ export async function searchFiles(
     queryConstraints.push(where('tags', 'array-contains-any', filters.tags))
   } else if (filters.query && filters.query.trim().length >= 2) {
     // searchTokens holds every prefix of every word in the name/tags (see
-    // generateSearchTokens above) — array-contains on the query's first word
-    // turns free-text search into a real indexed query instead of scanning
-    // every raw document, which is what made rare-term search slow before.
-    // Later words in a multi-word query are still checked in the post-filter
-    // below for full correctness.
-    const firstWord = filters.query.trim().toLowerCase().split(/\s+/)[0]
-    queryConstraints.push(where('searchTokens', 'array-contains', firstWord))
+    // generateSearchTokens above) — array-contains on one of the query's
+    // words turns free-text search into a real indexed query instead of
+    // scanning every raw document, which is what made rare-term search slow
+    // before. Later words in a multi-word query are still checked in the
+    // post-filter below for full correctness.
+    // Split the same way generateSearchTokens does (including on hyphens) so
+    // a query like "kabin-ici" probes for the token "kabin" instead of the
+    // literal "kabin-ici", which searchTokens never contains as a single
+    // entry — a plain \s+ split left hyphenated queries matching nothing.
+    //
+    // Probe with the LONGEST word, not the first. Real example (2026-09-16):
+    // "11_A0087.MP4" split into ["11", "a0087", "mp4"] — the archive's stock
+    // footage uses a common "NN_XXXX.ext" naming convention, so "11" alone
+    // matches thousands of files across the whole collection. The result-set
+    // fetch only pages through the collection (ordered by recency) until it
+    // has ~2 pages of client-filtered matches, so the actual target file —
+    // unless recently modified — never gets pulled in; the search silently
+    // "finds nothing" from the user's point of view. A longer word ("a0087")
+    // is statistically far rarer and narrows the Firestore candidate set
+    // enough that the real match actually surfaces.
+    const words = filters.query.trim().toLowerCase().split(/[^a-z0-9çğıöşüâîû]+/i).filter(w => w.length > 0)
+    const probeWord = words.reduce((longest, w) => (w.length > longest.length ? w : longest), '')
+    queryConstraints.push(where('searchTokens', 'array-contains', probeWord))
   }
 
   // Note: sources/licenseType/dateRange are post-filtered below (not query
@@ -207,18 +261,30 @@ export async function searchFiles(
       return enrichFile(data)
     })
 
+    // Hide byte-identical copies (same hash) — the representative stays and
+    // lists its copies in the detail panel. rawCount above is pre-filter, so
+    // paging keeps fetching as with every other post-filter.
+    files = files.filter((f) => !f.isDuplicate)
+
     // Post-query filtering (for complex filters)
     if (filters.sources && filters.sources.length > 0) {
       files = files.filter((f) => filters.sources!.includes(f.source))
     }
 
+    if (filters.type && filters.type.length > 0) {
+      files = files.filter((f) => filters.type!.includes(getMediaCategory(f.extension)))
+    }
+
     if (filters.query) {
+      // Every query word must appear somewhere in the name, tags, or the AI's
+      // description / on-screen text. (The Firestore probe above only proves
+      // the longest word is indexed on the file.)
       const q = filters.query.toLowerCase()
-      files = files.filter(
-        (f) =>
-          f.name.toLowerCase().includes(q) ||
-          f.tags.some((t) => t.toLowerCase().includes(q))
-      )
+      const qWords = q.split(/[^a-z0-9çğıöşüâîû]+/i).filter((w) => w.length > 0)
+      files = files.filter((f) => {
+        const haystack = [f.name, ...f.tags, aiSearchText(f.ai), f.duplicateSearchText || ''].join(' ').toLowerCase()
+        return haystack.includes(q) || qWords.every((w) => haystack.includes(w))
+      })
     }
 
     if (filters.licenseType && filters.licenseType.length > 0) {
@@ -250,16 +316,58 @@ export async function searchFiles(
  */
 export async function getFileCounts(): Promise<{ total: number; local: number; drive: number }> {
   const filesRef = collection(db, FILES_COLLECTION)
-  const [totalSnap, localSnap, driveSnap] = await Promise.all([
+  const [totalSnap, localSnap, driveSnap, dups] = await Promise.all([
     getCountFromServer(filesRef),
     getCountFromServer(query(filesRef, where('source', '==', 'local'))),
     getCountFromServer(query(filesRef, where('source', '==', 'drive'))),
+    countDuplicates(),
   ])
+  // Hidden copies are all local files (hash-matched, see mark_duplicates.py).
   return {
-    total: totalSnap.data().count,
-    local: localSnap.data().count,
+    total: Math.max(0, totalSnap.data().count - dups),
+    local: Math.max(0, localSnap.data().count - dups),
     drive: driveSnap.data().count,
   }
+}
+
+/** Number of copies hidden from the UI (isDuplicate == true), optionally for a set of extensions. */
+async function countDuplicates(extensions?: string[]): Promise<number> {
+  try {
+    const filesRef = collection(db, FILES_COLLECTION)
+    const constraints = [where('isDuplicate', '==', true)]
+    if (extensions) constraints.push(where('extension', 'in', extensions))
+    return (await getCountFromServer(query(filesRef, ...constraints))).data().count
+  } catch (err) {
+    console.error('countDuplicates failed — showing raw counts:', err)
+    return 0
+  }
+}
+
+/**
+ * Server-side aggregate counts by asset type, for the archive-wide stats
+ * bar. Extension lists mirror the scanners' own (scannerLocalPreview.cjs,
+ * scannerLocalImages.cjs) — kept separate rather than imported since this
+ * is frontend TS and those are CommonJS scanner scripts. Also the single
+ * source of truth for getMediaCategory() above, so the "Dosya Türü" search
+ * filter and this stats bar always agree on what counts as video/image.
+ */
+export async function getFileTypeCounts(): Promise<{ video: number; image: number; psd: number; other: number }> {
+  const filesRef = collection(db, FILES_COLLECTION)
+  const [totalSnap, videoSnap, imageSnap, psdSnap, dupAll, dupVideo, dupImage, dupPsd] = await Promise.all([
+    getCountFromServer(filesRef),
+    getCountFromServer(query(filesRef, where('extension', 'in', VIDEO_EXTENSIONS))),
+    getCountFromServer(query(filesRef, where('extension', 'in', IMAGE_EXTENSIONS))),
+    getCountFromServer(query(filesRef, where('extension', '==', 'psd'))),
+    countDuplicates(),
+    countDuplicates(VIDEO_EXTENSIONS),
+    countDuplicates(IMAGE_EXTENSIONS),
+    countDuplicates(['psd']),
+  ])
+  const video = Math.max(0, videoSnap.data().count - dupVideo)
+  const image = Math.max(0, imageSnap.data().count - dupImage)
+  const psd = Math.max(0, psdSnap.data().count - dupPsd)
+  const total = Math.max(0, totalSnap.data().count - dupAll)
+  return { video, image, psd, other: Math.max(0, total - video - image - psd) }
 }
 
 /**
@@ -321,6 +429,64 @@ export async function updateFile(
 }
 
 /**
+ * "Otomatik Etiketle" button. Used to call the tagNewFiles Cloud Function
+ * (Claude Vision); that ran out of API credit, and the local v2 vision
+ * worker on the Mac does the same job for free. A browser can't reach the
+ * Mac directly, so Firestore is the bridge: this just raises two flags the
+ * worker polls for. `tag_requested` is the priority queue — the worker
+ * checks it between every file, so a click waits at most one file's
+ * processing time instead of sitting behind the whole backlog;
+ * `needs_tagging` keeps the file in the normal queue as a fallback.
+ * The worker clears `tag_requested` (and writes tags/ai.*) when done —
+ * watchFile() below is how the panel notices.
+ */
+export async function requestAutoTag(fileId: string): Promise<void> {
+  await updateFile(fileId, { needs_tagging: true, tag_requested: true })
+}
+
+/**
+ * "Oynatmak için yükle": asks the Mac enrichment worker (enrich.cjs) to copy
+ * a light-scanned video into the streaming bucket. Firestore rules let any
+ * signed-in team member set exactly this one field.
+ */
+export async function requestVideoUpload(fileId: string): Promise<void> {
+  await updateDoc(doc(db, FILES_COLLECTION, fileId), { upload_requested: true })
+}
+
+/**
+ * Live subscription to one file document; returns the unsubscribe fn.
+ */
+export function watchFile(
+  fileId: string,
+  onChange: (data: DocumentData) => void
+): () => void {
+  return onSnapshot(
+    doc(db, FILES_COLLECTION, fileId),
+    (snap) => {
+      if (snap.exists()) onChange(snap.data())
+    },
+    (error) => console.error('watchFile error:', error)
+  )
+}
+
+/**
+ * Heartbeat of the Mac AI worker (ai_worker_status/main). `lastSeenMs` is
+ * null until the first beat lands.
+ */
+export function watchWorkerStatus(
+  onChange: (status: { lastSeenMs: number | null; state: string }) => void
+): () => void {
+  return onSnapshot(
+    doc(db, 'ai_worker_status', 'main'),
+    (snap) => {
+      const d = snap.data()
+      onChange({ lastSeenMs: d?.lastSeen?.toMillis?.() ?? null, state: d?.state ?? 'unknown' })
+    },
+    (error) => console.error('watchWorkerStatus error:', error)
+  )
+}
+
+/**
  * Keeps the `tags` collection's usageCount in sync with tags actually
  * present on files — getTags() (used by the tag filter and search
  * autocomplete) reads from this collection, not by scanning every file.
@@ -348,7 +514,7 @@ export async function addTagsToFile(fileId: string, tags: string[]): Promise<voi
       const updatedTags = Array.from(new Set([...file.tags, ...newTags]))
       await updateFile(fileId, {
         tags: updatedTags,
-        searchTokens: generateSearchTokens(file.name, updatedTags),
+        searchTokens: generateSearchTokens(file.name, updatedTags, aiSearchText(file.ai)),
       })
       await Promise.all(newTags.map((t) => bumpTagUsage(t, 1)))
     }
@@ -369,7 +535,7 @@ export async function removeTagFromFile(fileId: string, tag: string): Promise<vo
       if (updated.length === file.tags.length) return
       await updateFile(fileId, {
         tags: updated,
-        searchTokens: generateSearchTokens(file.name, updated),
+        searchTokens: generateSearchTokens(file.name, updated, aiSearchText(file.ai)),
       })
       await bumpTagUsage(tag, -1)
     }
@@ -622,9 +788,14 @@ export async function createTag(tag: Omit<DAMTag, 'tagId'>): Promise<string> {
 export default {
   searchFiles,
   getFileCounts,
+  getFileTypeCounts,
   getFile,
   createFile,
   updateFile,
+  requestAutoTag,
+  requestVideoUpload,
+  watchFile,
+  watchWorkerStatus,
   addTagsToFile,
   removeTagFromFile,
   updateFileRights,

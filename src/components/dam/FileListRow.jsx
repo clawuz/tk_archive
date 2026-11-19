@@ -1,12 +1,15 @@
 import { useState, useEffect, useRef } from 'react';
 import { resolveThumbnail } from '../../services/thumbnailService';
-import { getFileTypeIcon } from '../../utils/fileIcons';
+import { getFileTypeIcon, getFileTypeBadge } from '../../utils/fileIcons';
+import { isFavorite, toggleFavorite } from '../../services/favoritesService';
+import { StarIcon, FolderIcon, CloudIcon } from '../icons';
 
 export default function FileListRow({ file, onSelect, selectable = false, selected = false, onToggleSelect }) {
   const [thumbnail, setThumbnail] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
   const [isVisible, setIsVisible] = useState(false);
+  const [favorite, setFavorite] = useState(() => isFavorite(file.fileId));
   const rowRef = useRef(null);
 
   useEffect(() => {
@@ -80,16 +83,21 @@ export default function FileListRow({ file, onSelect, selectable = false, select
           />
         ) : (
           <div className={`w-full h-full flex items-center justify-center ${fileIcon.bg}`}>
-            <span className="text-xl">{fileIcon.icon}</span>
+            <fileIcon.Icon size={20} className={fileIcon.color} />
           </div>
         )}
       </div>
 
       {/* Name + tags */}
       <div className="flex-1 min-w-0">
-        <p className="font-medium text-sm text-slate-900 dark:text-white truncate">
-          {file.name}
-        </p>
+        <div className="flex items-center gap-2">
+          <span className="shrink-0 px-1.5 py-0.5 text-[9px] font-mono font-semibold tracking-wide text-slate-500 dark:text-slate-400 border border-slate-200 dark:border-slate-600 rounded">
+            {getFileTypeBadge(file.mimeType)}
+          </span>
+          <p className="font-medium text-sm text-slate-900 dark:text-white truncate">
+            {file.name}
+          </p>
+        </div>
         {file.tags?.length > 0 && (
           <div className="flex gap-1 mt-1 overflow-hidden">
             {file.tags.slice(0, 4).map((tag) => (
@@ -108,8 +116,9 @@ export default function FileListRow({ file, onSelect, selectable = false, select
       </div>
 
       {/* Source */}
-      <div className="hidden sm:block text-xs text-slate-500 dark:text-slate-400 w-20 flex-shrink-0">
-        {file.source === 'local' ? '📂 Yerel' : '☁️ Drive'}
+      <div className="hidden sm:flex items-center gap-1 text-xs text-slate-500 dark:text-slate-400 w-20 flex-shrink-0">
+        {file.source === 'local' ? <FolderIcon size={12} /> : <CloudIcon size={12} />}
+        {file.source === 'local' ? 'Yerel' : 'Drive'}
       </div>
 
       {/* Size */}
@@ -121,6 +130,21 @@ export default function FileListRow({ file, onSelect, selectable = false, select
       <div className="hidden md:block text-xs text-slate-500 dark:text-slate-400 w-24 flex-shrink-0 text-right">
         {file.dateFormatted}
       </div>
+
+      {/* Favorite toggle */}
+      <button
+        type="button"
+        onClick={(e) => {
+          e.stopPropagation()
+          setFavorite(toggleFavorite(file.fileId))
+        }}
+        title={favorite ? 'Favorilerden çıkar' : 'Favorilere ekle'}
+        className="flex-shrink-0 w-6 h-6 flex items-center justify-center"
+      >
+        <span className={favorite ? 'text-red-600' : 'text-slate-300 dark:text-slate-600'}>
+          <StarIcon filled={favorite} size={16} />
+        </span>
+      </button>
     </div>
   );
 }

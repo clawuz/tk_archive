@@ -11,6 +11,19 @@ const SUPPORTED_VIDEO_FORMATS = ['video/mp4', 'video/quicktime', 'video/x-matros
 // bandwidth and storage for no benefit).
 const VIDEO_BUCKET = 'tk-archive-cd9d0-videos';
 
+// Same bucket videos use, under a previews/ prefix — scanner.cjs uploads a
+// 1600px render here for local raster images (image/*), keyed by
+// `{fileId}.png`, same deterministic-URL convention as video. The small
+// (240px) thumbnail stored inline in Firestore stays the grid tile's
+// source — this is only for the full-screen lightbox, which looked
+// blurry/cropped stretching that small thumbnail up to fill the screen.
+// Not every image has one yet (only scanned/backfilled after this was
+// added) — callers must fall back to file.thumbnailUrl on load error.
+export function getImagePreviewUrl(file: DAMFile): string | null {
+  if (file.source !== 'local' || !file.mimeType?.startsWith('image/')) return null;
+  return `https://storage.googleapis.com/${VIDEO_BUCKET}/previews/${file.fileId}.png`;
+}
+
 export function canStream(file: DAMFile): boolean {
   // Files with a Drive-hosted preview (either true Drive-sourced files, or
   // local files whose preview scannerLocalPreview.cjs uploaded to Drive)
@@ -31,6 +44,14 @@ export function getStreamUrl(file: DAMFile): string | null {
   // covers both true Drive-sourced files (source: 'drive') and local files
   // whose small preview was uploaded to Drive by scannerLocalPreview.cjs
   // (source: 'local', driveFileId set to the preview's Drive file ID).
+  //
+  // A direct-download URL (drive.usercontent.google.com/download) was
+  // tried here instead, to avoid Drive's /preview iframe chrome — curl
+  // showed clean video/mp4 bytes with open CORS and range support, but in
+  // an actual <video> element in the app it failed to play across the
+  // board. Whatever real browsers hit that curl didn't (session/referrer
+  // gating, a redirect curl silently followed differently, etc.), it
+  // wasn't reliable — reverted to the iframe, which does work.
   if (file.driveFileId) {
     return `https://drive.google.com/file/d/${file.driveFileId}/preview`;
   }
