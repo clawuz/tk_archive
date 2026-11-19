@@ -82,6 +82,18 @@ async function qlThumb(filePath, size, tmpTag) {
   // tmpDir temizliği çağıran tarafta (dosya okunduktan sonra)
 }
 
+// Küçük resim Firestore'da inline durur → PNG yerine JPEG (~10x küçük, arama hızı). Saydam PNG'ler ya da
+// kazanç olmayanlar PNG kalır (png_to_jpeg.py boş döner).
+const PY = path.join(__dirname, '../tk-ai-engine/.venv/bin/python');
+const PNG_TO_JPEG = path.join(__dirname, '../tk-ai-engine/sprint3/png_to_jpeg.py');
+async function thumbDataUri(pngPath) {
+  try {
+    const { stdout } = await execFilePromise(PY, [PNG_TO_JPEG, pngPath], { timeout: 20000, maxBuffer: 8 << 20 });
+    if (stdout) return `data:image/jpeg;base64,${stdout}`;
+  } catch (e) { /* PNG'ye düş */ }
+  return `data:image/png;base64,${fs.readFileSync(pngPath).toString('base64')}`;
+}
+
 function cleanTmp(tmpTag, size) {
   fs.rmSync(path.join(os.tmpdir(), `enrich-${tmpTag}-${size}`), { recursive: true, force: true });
 }
@@ -113,9 +125,9 @@ async function enrichOne(doc) {
   } else if (THUMBNAIL_EXTENSIONS.has(ext)) {
     const small = await qlThumb(p, 240, id);
     if (small) {
-      const b64 = fs.readFileSync(small).toString('base64');
+      const dataUri = await thumbDataUri(small);
       cleanTmp(id, 240);
-      update.thumbnail = { url: `data:image/png;base64,${b64}`, generated: true, generatedAt: Date.now() };
+      update.thumbnail = { url: dataUri, generated: true, generatedAt: Date.now() };
       update.needs_tagging = true;
       update.enrichStatus = 'done';
     } else {

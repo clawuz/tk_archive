@@ -162,6 +162,43 @@ function enrichFile(file: DAMFile): DAMFileUI {
 // FILES OPERATIONS
 // ============================================================================
 
+// Word → how many files carry it in searchTokens. Counts are cheap (server-side
+// aggregation, ~1 read per 1000 index entries) and stable enough to keep for
+// the session, so a query is only ever counted once per word.
+const tokenCountCache = new Map<string, number>()
+
+/**
+ * Picks the word to probe Firestore with. The probe decides how many raw
+ * documents the client has to page through before it has enough matches (the
+ * other words are only checked client-side), so the RAREST word wins — e.g.
+ * "a350 kargo" was probing "kargo" (tens of thousands of files, 66 rounds,
+ * 460 MB) instead of "a350". Falls back to the longest word, which is a good
+ * proxy for rarity, whenever counting is not possible.
+ */
+async function pickProbeWord(words: string[]): Promise<string> {
+  const unique = [...new Set(words)]
+  const longest = unique.reduce((l, w) => (w.length > l.length ? w : l), '')
+  if (unique.length <= 1) return longest
+  try {
+    const counts = await Promise.all(
+      unique.map(async (w) => {
+        const cached = tokenCountCache.get(w)
+        if (cached !== undefined) return { w, count: cached }
+        const snap = await getCountFromServer(
+          query(collection(db, FILES_COLLECTION), where('searchTokens', 'array-contains', w))
+        )
+        const count = snap.data().count
+        tokenCountCache.set(w, count)
+        return { w, count }
+      })
+    )
+    // A word nobody carries (typo) wins too: the search ends immediately, empty.
+    return counts.reduce((best, c) => (c.count < best.count ? c : best)).w
+  } catch {
+    return longest
+  }
+}
+
 /**
  * Fetch one page of files matching `filters`, ordered by filters.sortBy.
  *
@@ -216,7 +253,7 @@ export async function searchFiles(
     // is statistically far rarer and narrows the Firestore candidate set
     // enough that the real match actually surfaces.
     const words = filters.query.trim().toLowerCase().split(/[^a-z0-9çğıöşüâîû]+/i).filter(w => w.length > 0)
-    const probeWord = words.reduce((longest, w) => (w.length > longest.length ? w : longest), '')
+    const probeWord = await pickProbeWord(words)
     queryConstraints.push(where('searchTokens', 'array-contains', probeWord))
   }
 

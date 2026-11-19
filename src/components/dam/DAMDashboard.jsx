@@ -45,6 +45,11 @@ export default function DAMDashboard() {
   const [viewCounts, setViewCounts] = useState({ all: 0, favorites: 0, recent: 0 })
   const cursorRef = useRef(null)
   const rawExhaustedRef = useRef(false)
+  // Fetches share one cursor, so they run one at a time (the background fill of
+  // the second page vs. a quick "next page" click); loadedCountRef is the buffer
+  // length as the fetch chain sees it (state lags behind until the next render).
+  const fetchChainRef = useRef(Promise.resolve())
+  const loadedCountRef = useRef(0)
   // Bumped at the start of every loadFiles() call; fetchUntil's caller
   // compares its own snapshot against the live value once the (possibly
   // slow) fetch resolves, and discards the result if a newer search has
@@ -160,6 +165,7 @@ export default function DAMDashboard() {
       if (myRequestId !== requestIdRef.current) return
       cursorRef.current = null
       rawExhaustedRef.current = true
+      loadedCountRef.current = files.length
       setLoadedFiles(files)
       setError(null)
     } catch (err) {
@@ -181,14 +187,14 @@ export default function DAMDashboard() {
   // Cursor/exhausted are threaded through as plain values, not shared refs,
   // so two overlapping calls (e.g. from fast typing) never read or clobber
   // each other's pagination state mid-flight.
-  async function fetchUntil(minCount, buffer, startCursor, startExhausted) {
+  async function fetchUntil(minCount, buffer, startCursor, startExhausted, batchSize = FETCH_BATCH_SIZE) {
     let acc = buffer
     let cursor = startCursor
     let exhausted = startExhausted
     while (acc.length < minCount && !exhausted) {
-      const result = await damService.searchFiles(filters, cursor, FETCH_BATCH_SIZE)
+      const result = await damService.searchFiles(filters, cursor, batchSize)
       cursor = result.lastDoc
-      if (result.rawCount < FETCH_BATCH_SIZE) exhausted = true
+      if (result.rawCount < batchSize) exhausted = true
       if (result.rawCount === 0) break
       acc = [...acc, ...result.files]
     }
@@ -202,12 +208,20 @@ export default function DAMDashboard() {
     setPageIndex(0)
     setLoading(true)
     try {
-      const { files: buffer, cursor, exhausted } = await fetchUntil(PAGE_SIZE * 2, [], null, false)
+      // First paint needs just ONE page (+1 file to know a next page exists),
+      // fetched in a small batch — every document carries its inline
+      // thumbnail, so the batch size is what the user waits for. The second
+      // page is then filled in the background.
+      fetchChainRef.current = Promise.resolve()
+      const first = await fetchUntil(PAGE_SIZE + 1, [], null, false, PAGE_SIZE + 4)
       if (myRequestId !== requestIdRef.current) return // a newer search started meanwhile — discard
-      cursorRef.current = cursor
-      rawExhaustedRef.current = exhausted
-      setLoadedFiles(buffer)
+      cursorRef.current = first.cursor
+      rawExhaustedRef.current = first.exhausted
+      loadedCountRef.current = first.files.length
+      setLoadedFiles(first.files)
       setError(null)
+      setLoading(false)
+      if (!first.exhausted) fillBuffer(PAGE_SIZE * 2, myRequestId).catch((e) => console.error('Arka plan yüklemesi:', e)) // second page, in the background
     } catch (err) {
       if (myRequestId !== requestIdRef.current) return
       setError(err.message || 'Dosyalar yüklenemedi')
@@ -221,21 +235,38 @@ export default function DAMDashboard() {
   // plus one page ahead (to know whether a "next" page exists).
   async function ensurePage(targetPageIndex) {
     const needed = (targetPageIndex + 2) * PAGE_SIZE
-    if (loadedFiles.length >= needed || rawExhaustedRef.current) return
+    if (loadedCountRef.current >= needed || rawExhaustedRef.current) return
     const myRequestId = requestIdRef.current // paginating the current search, not starting a new one — still discard if a new search supersedes it
     setPageLoading(true)
     try {
-      const { files: buffer, cursor, exhausted } = await fetchUntil(needed, loadedFiles, cursorRef.current, rawExhaustedRef.current)
-      if (myRequestId !== requestIdRef.current) return
-      cursorRef.current = cursor
-      rawExhaustedRef.current = exhausted
-      setLoadedFiles(buffer)
+      await fillBuffer(needed, myRequestId)
     } catch (err) {
       if (myRequestId !== requestIdRef.current) return
       console.error('Sonraki sayfa yüklenemedi:', err)
     } finally {
       if (myRequestId === requestIdRef.current) setPageLoading(false)
     }
+  }
+
+  // Appends fetched batches until `needed` files are buffered (or the raw
+  // documents run out). Queued behind any fetch already in flight, and it
+  // re-reads the buffer size when its turn comes — so a click on "next page"
+  // never refetches what the background fill just loaded.
+  function fillBuffer(needed, requestId) {
+    const run = async () => {
+      if (requestId !== requestIdRef.current) return
+      if (loadedCountRef.current >= needed || rawExhaustedRef.current) return
+      const { files, cursor, exhausted } = await fetchUntil(
+        needed - loadedCountRef.current, [], cursorRef.current, rawExhaustedRef.current)
+      if (requestId !== requestIdRef.current) return
+      cursorRef.current = cursor
+      rawExhaustedRef.current = exhausted
+      loadedCountRef.current += files.length
+      setLoadedFiles((prev) => [...prev, ...files])
+    }
+    const p = fetchChainRef.current.then(run, run)
+    fetchChainRef.current = p.catch(() => {})
+    return p
   }
 
   async function handleNextPage() {
