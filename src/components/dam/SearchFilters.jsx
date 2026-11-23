@@ -12,12 +12,14 @@ const MEDIA_TYPE_LABELS = {
 
 export default function SearchFilters({ filters, onChange }) {
   const [tags, setTags] = useState([])
+  const [groups, setGroups] = useState([])
   const [selectedSources, setSelectedSources] = useState(filters.sources || ['local', 'drive'])
   // Derived straight from the prop, not mirrored into local state — tags can
   // also be selected from SearchBar.jsx's suggestion dropdown, so a local
   // copy here would go stale the moment that happens (checkboxes and the
   // active-filter chips below would silently stop reflecting reality).
   const selectedTags = filters.tags || []
+  const selectedGroups = filters.groups || []
   const [dateFrom, setDateFrom] = useState(
     filters.dateRange?.from ? new Date(filters.dateRange.from).toISOString().slice(0, 7) : ''
   )
@@ -37,7 +39,17 @@ export default function SearchFilters({ filters, onChange }) {
   // Load available tags
   useEffect(() => {
     loadTags()
+    damService.getGroups().then(setGroups).catch(() => {})
   }, [])
+
+  // Üst grup seçilince alt gruplar ayrıca işaretlenmez: dosyalar alt gruba girerken
+  // üst gruba da yazıldığı için üst grup zaten hepsini kapsar.
+  function handleGroupToggle(groupId) {
+    const updated = selectedGroups.includes(groupId)
+      ? selectedGroups.filter((g) => g !== groupId)
+      : [...selectedGroups, groupId]
+    onChange({ groups: updated })
+  }
 
   async function loadTags() {
     try {
@@ -138,6 +150,7 @@ export default function SearchFilters({ filters, onChange }) {
       query: '',
       sources: ['local', 'drive'],
       tags: [],
+      groups: [],
       dateRange: null,
       licenseType: [],
       type: [],
@@ -220,7 +233,7 @@ export default function SearchFilters({ filters, onChange }) {
         {/* Active filter summary — every non-default selection as a
             removable chip, so a full set of filters is scannable/undoable
             at a glance instead of only visible by re-opening each section. */}
-        {(filters.query || selectedTags.length > 0 || selectedLicenseTypes.length > 0 || selectedMediaTypes.length > 0 || dateFrom || dateTo) && (
+        {(filters.query || selectedGroups.length > 0 || selectedTags.length > 0 || selectedLicenseTypes.length > 0 || selectedMediaTypes.length > 0 || dateFrom || dateTo) && (
           <div className="flex flex-wrap gap-1.5 -mt-2">
             {filters.query && (
               <span className="inline-flex items-center gap-1 pl-2.5 pr-1.5 py-1 text-xs bg-slate-100 dark:bg-slate-700 text-slate-700 dark:text-slate-200 rounded-full">
@@ -237,6 +250,21 @@ export default function SearchFilters({ filters, onChange }) {
                 </button>
               </span>
             )}
+            {selectedGroups.map((gid) => (
+              <span
+                key={gid}
+                className="inline-flex items-center gap-1 pl-2.5 pr-1.5 py-1 text-xs bg-teal-50 dark:bg-teal-900/40 text-teal-700 dark:text-teal-300 rounded-full"
+              >
+                {groups.find((g) => g.groupId === gid)?.name || gid}
+                <button
+                  type="button"
+                  onClick={() => handleGroupToggle(gid)}
+                  className="hover:text-red-600 dark:hover:text-red-400"
+                >
+                  <XIcon size={12} />
+                </button>
+              </span>
+            ))}
             {selectedTags.map((tagId) => (
               <span
                 key={tagId}
@@ -298,6 +326,40 @@ export default function SearchFilters({ filters, onChange }) {
                 </button>
               </span>
             )}
+          </div>
+        )}
+
+        {/* Konu Grupları (İK, Take-Off, Meslekler …) — tag_groups kurallarıyla dosyalara yazılır */}
+        {groups.length > 0 && (
+          <div>
+            <label className="flex items-center gap-1.5 text-sm font-medium text-slate-900 dark:text-white mb-2">
+              <TagIcon size={15} /> Konu Grupları
+            </label>
+            <div className="space-y-1.5">
+              {groups.map((g) => (
+                <label key={g.groupId} className={`flex items-center ${g.parent ? 'ml-5' : ''}`}>
+                  <input
+                    type="checkbox"
+                    checked={selectedGroups.includes(g.groupId)}
+                    onChange={() => handleGroupToggle(g.groupId)}
+                    className="rounded border-slate-300 text-blue-600 focus:ring-blue-500 cursor-pointer"
+                  />
+                  <span
+                    className="ml-2 inline-block w-2 h-2 rounded-full"
+                    style={{ background: g.color || '#64748b' }}
+                  />
+                  <span
+                    className={`ml-1.5 text-sm text-slate-700 dark:text-slate-300 ${g.parent ? '' : 'font-medium'}`}
+                    title={g.description || undefined}
+                  >
+                    {g.name}
+                  </span>
+                  {typeof g.fileCount === 'number' && (
+                    <span className="ml-auto text-xs text-slate-500 dark:text-slate-400">({g.fileCount})</span>
+                  )}
+                </label>
+              ))}
+            </div>
           </div>
         )}
 

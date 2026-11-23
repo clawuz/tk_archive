@@ -4,64 +4,168 @@
       "collectionGroup": "files",
       "queryScope": "COLLECTION",
       "fields": [
-        { "fieldPath": "tags", "arrayConfig": "CONTAINS" },
-        { "fieldPath": "modifiedAt", "order": "DESCENDING" }
+        {
+          "fieldPath": "tags",
+          "arrayConfig": "CONTAINS"
+        },
+        {
+          "fieldPath": "modifiedAt",
+          "order": "DESCENDING"
+        }
       ]
     },
     {
       "collectionGroup": "files",
       "queryScope": "COLLECTION",
       "fields": [
-        { "fieldPath": "tags", "arrayConfig": "CONTAINS" },
-        { "fieldPath": "name", "order": "DESCENDING" }
+        {
+          "fieldPath": "tags",
+          "arrayConfig": "CONTAINS"
+        },
+        {
+          "fieldPath": "name",
+          "order": "DESCENDING"
+        }
       ]
     },
     {
       "collectionGroup": "files",
       "queryScope": "COLLECTION",
       "fields": [
-        { "fieldPath": "tags", "arrayConfig": "CONTAINS" },
-        { "fieldPath": "size", "order": "DESCENDING" }
+        {
+          "fieldPath": "tags",
+          "arrayConfig": "CONTAINS"
+        },
+        {
+          "fieldPath": "size",
+          "order": "DESCENDING"
+        }
       ]
     },
     {
       "collectionGroup": "files",
       "queryScope": "COLLECTION",
       "fields": [
-        { "fieldPath": "tags", "arrayConfig": "CONTAINS" },
-        { "fieldPath": "views", "order": "DESCENDING" }
+        {
+          "fieldPath": "tags",
+          "arrayConfig": "CONTAINS"
+        },
+        {
+          "fieldPath": "views",
+          "order": "DESCENDING"
+        }
       ]
     },
     {
       "collectionGroup": "files",
       "queryScope": "COLLECTION",
       "fields": [
-        { "fieldPath": "searchTokens", "arrayConfig": "CONTAINS" },
-        { "fieldPath": "modifiedAt", "order": "DESCENDING" }
+        {
+          "fieldPath": "searchTokens",
+          "arrayConfig": "CONTAINS"
+        },
+        {
+          "fieldPath": "modifiedAt",
+          "order": "DESCENDING"
+        }
       ]
     },
     {
       "collectionGroup": "files",
       "queryScope": "COLLECTION",
       "fields": [
-        { "fieldPath": "searchTokens", "arrayConfig": "CONTAINS" },
-        { "fieldPath": "name", "order": "DESCENDING" }
+        {
+          "fieldPath": "searchTokens",
+          "arrayConfig": "CONTAINS"
+        },
+        {
+          "fieldPath": "name",
+          "order": "DESCENDING"
+        }
       ]
     },
     {
       "collectionGroup": "files",
       "queryScope": "COLLECTION",
       "fields": [
-        { "fieldPath": "searchTokens", "arrayConfig": "CONTAINS" },
-        { "fieldPath": "size", "order": "DESCENDING" }
+        {
+          "fieldPath": "searchTokens",
+          "arrayConfig": "CONTAINS"
+        },
+        {
+          "fieldPath": "size",
+          "order": "DESCENDING"
+        }
       ]
     },
     {
       "collectionGroup": "files",
       "queryScope": "COLLECTION",
       "fields": [
-        { "fieldPath": "searchTokens", "arrayConfig": "CONTAINS" },
-        { "fieldPath": "views", "order": "DESCENDING" }
+        {
+          "fieldPath": "searchTokens",
+          "arrayConfig": "CONTAINS"
+        },
+        {
+          "fieldPath": "views",
+          "order": "DESCENDING"
+        }
+      ]
+    },
+    {
+      "collectionGroup": "files",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "groups",
+          "arrayConfig": "CONTAINS"
+        },
+        {
+          "fieldPath": "modifiedAt",
+          "order": "DESCENDING"
+        }
+      ]
+    },
+    {
+      "collectionGroup": "files",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "groups",
+          "arrayConfig": "CONTAINS"
+        },
+        {
+          "fieldPath": "name",
+          "order": "DESCENDING"
+        }
+      ]
+    },
+    {
+      "collectionGroup": "files",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "groups",
+          "arrayConfig": "CONTAINS"
+        },
+        {
+          "fieldPath": "size",
+          "order": "DESCENDING"
+        }
+      ]
+    },
+    {
+      "collectionGroup": "files",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "groups",
+          "arrayConfig": "CONTAINS"
+        },
+        {
+          "fieldPath": "views",
+          "order": "DESCENDING"
+        }
       ]
     }
   ],

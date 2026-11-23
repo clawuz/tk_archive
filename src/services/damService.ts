@@ -29,6 +29,7 @@ import {
   DAMScan,
   DAMChange,
   DAMTag,
+  DAMGroup,
   DAMSearchFilters,
   DAMFileUI,
   MediaCategory,
@@ -228,7 +229,12 @@ export async function searchFiles(
   // wins when both a tag filter and free text are active — the text is still
   // applied as a post-filter below, just against a smaller, already-narrowed
   // candidate set instead of the whole collection.
-  if (filters.tags && filters.tags.length > 0) {
+  const groupFilter = filters.groups && filters.groups.length > 0
+  if (groupFilter) {
+    // Konu grubu seçiliyse sorguyu o belirler (array-contains tek kez kullanılabilir);
+    // etiket/metin süzgeçleri aşağıda istemci tarafında uygulanır.
+    queryConstraints.push(where('groups', 'array-contains-any', filters.groups!.slice(0, 30)))
+  } else if (filters.tags && filters.tags.length > 0) {
     queryConstraints.push(where('tags', 'array-contains-any', filters.tags))
   } else if (filters.query && filters.query.trim().length >= 2) {
     // searchTokens holds every prefix of every word in the name/tags (see
@@ -306,6 +312,10 @@ export async function searchFiles(
     // Post-query filtering (for complex filters)
     if (filters.sources && filters.sources.length > 0) {
       files = files.filter((f) => filters.sources!.includes(f.source))
+    }
+
+    if (groupFilter && filters.tags && filters.tags.length > 0) {
+      files = files.filter((f) => filters.tags!.some((t) => f.tags?.includes(t)))
     }
 
     if (filters.type && filters.type.length > 0) {
@@ -810,6 +820,21 @@ export async function getTags(): Promise<DAMTag[]> {
 }
 
 /**
+ * Konu grupları (tag_groups) — filtre panelindeki "Konu Grupları" bölümü
+ */
+export async function getGroups(): Promise<DAMGroup[]> {
+  try {
+    const snapshot = await getDocs(collection(db, 'tag_groups'))
+    return snapshot.docs
+      .map((d) => ({ ...(d.data() as any), groupId: d.id }) as DAMGroup)
+      .sort((a, b) => (a.order ?? 99) - (b.order ?? 99))
+  } catch (error) {
+    console.error('Error getting groups:', error)
+    return []
+  }
+}
+
+/**
  * Create new tag
  */
 export async function createTag(tag: Omit<DAMTag, 'tagId'>): Promise<string> {
@@ -844,5 +869,6 @@ export default {
   getChangesByScan,
   createChange,
   getTags,
+  getGroups,
   createTag,
 }

@@ -240,6 +240,22 @@ async function queueProxies() {
   }
 }
 
+// Konu grupları: yeni taranan dosyalar kurallara göre gruba girsin — iş yokken saatte bir
+// (sprint3/assign_groups.py; yalnızca değişen dosyaları yazar).
+const ASSIGN_GROUPS = path.join(__dirname, '../tk-ai-engine/sprint3/assign_groups.py');
+let lastGroupRun = 0;
+async function maybeAssignGroups() {
+  if (Date.now() - lastGroupRun < 3600 * 1000) return;
+  lastGroupRun = Date.now();
+  try {
+    await beat('groups');
+    await execFilePromise(PY, [ASSIGN_GROUPS, '--quiet'], { timeout: 20 * 60 * 1000, maxBuffer: 4 << 20 });
+    console.log('  ▦ konu grupları güncellendi');
+  } catch (e) {
+    console.log(`  ✗ konu grupları: ${String(e.message).split('\n')[0]}`);
+  }
+}
+
 async function nextBatch() {
   for (const tier of [1, 2, 3, 4]) {
     const s = await db.collection('files').where('needs_enrichment', '==', true).where('enrichTier', '==', tier).limit(30).get();
@@ -293,6 +309,7 @@ async function main() {
     const docs = await nextBatch();
     if (!docs.length) {
       if (await handleProxyQueue()) continue;
+      await maybeAssignGroups();
       if (once) { console.log('Kuyruk boş.'); return; }
       await beat('idle');
       await sleep(IDLE_SLEEP_MS);

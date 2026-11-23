@@ -206,7 +206,23 @@ export interface DAMChange {
 
   // Metadata
   tags?: string[]
+  // Konu grupları (tag_groups id'leri): sprint3/assign_groups.py yazar
+  groups?: string[]
   category?: string
+}
+
+/**
+ * Konu grubu — "İK ve İşveren Markası", "Take-Off" gibi. Alt grubun `parent`'ı vardır;
+ * dosya alt gruba girince üst gruba da girer. Kurallar assign_groups.py'de işlenir.
+ */
+export interface DAMGroup {
+  groupId: string
+  name: string
+  description?: string
+  color?: string
+  parent?: string
+  order?: number
+  fileCount?: number
 }
 
 /**
@@ -230,6 +246,7 @@ export interface DAMSearchFilters {
   query?: string // full-text search
   sources?: FileSource[] // local, drive
   tags?: string[]
+  groups?: string[] // konu grupları (tag_groups id'leri)
   type?: MediaCategory[] // broad type: video, image, design, document, other — see getMediaCategory()
   dateRange?: {
     from: number

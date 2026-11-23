@@ -119,5 +119,12 @@ service cloud.firestore {
       allow read: if isAuthenticated() && isAllowedDomain();
       allow write: if isAuthenticated() && isAllowedDomain() && (hasRole('admin') || hasRole('super_admin'));
     }
+
+    // Konu grupları (İK / Take-Off / Meslekler …): filtre paneli okur; kurallar
+    // admin/super_admin tarafından (ya da Mac'teki assign_groups.py ile) yazılır.
+    match /tag_groups/{groupId} {
+      allow read: if isAuthenticated() && isAllowedDomain();
+      allow write: if isAuthenticated() && isAllowedDomain() && (hasRole('admin') || hasRole('super_admin'));
+    }
   }
 }
