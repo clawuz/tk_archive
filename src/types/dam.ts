@@ -74,6 +74,8 @@ export interface DAMFile {
   // (enrich.cjs uploads when upload_requested is set). undefined = legacy
   // doc, uploaded by the full scanner.
   videoUploaded?: boolean
+  // true = 720p H.264 proxy GCS'te (proxies/{fileId}.mp4); oynatma bundan
+  videoProxy?: boolean
   upload_requested?: boolean
   uploadError?: string
   previewUrl?: string

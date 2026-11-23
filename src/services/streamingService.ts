@@ -24,7 +24,16 @@ export function getImagePreviewUrl(file: DAMFile): string | null {
   return `https://storage.googleapis.com/${VIDEO_BUCKET}/previews/${file.fileId}.png`;
 }
 
+// enrich.cjs'in ürettiği 720p H.264 önizleme kopyası (orijinal 4K HEVC değil):
+// `proxies/{fileId}.mp4`. videoProxy=true olan her video — kaynak formatı/boyutu
+// ne olursa olsun — tarayıcıda oynar.
+export function getProxyUrl(file: DAMFile): string | null {
+  if (!file.videoProxy) return null;
+  return `https://storage.googleapis.com/${VIDEO_BUCKET}/proxies/${file.fileId}.mp4`;
+}
+
 export function canStream(file: DAMFile): boolean {
+  if (file.videoProxy) return true;
   // Files with a Drive-hosted preview (either true Drive-sourced files, or
   // local files whose preview scannerLocalPreview.cjs uploaded to Drive)
   // are always a standard playable video once transcoded — isVideoFile
@@ -61,6 +70,9 @@ export function getStreamUrl(file: DAMFile): string | null {
   // available" rather than falling through to a GCS URL that was never
   // populated for Drive files and would 404.
   if (file.source === 'drive') return null;
+
+  const proxy = getProxyUrl(file);
+  if (proxy) return proxy;
 
   if (!file.extension) return null;
   return `https://storage.googleapis.com/${VIDEO_BUCKET}/${file.fileId}.${file.extension.toLowerCase()}`;

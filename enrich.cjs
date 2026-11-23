@@ -7,7 +7,10 @@
  * önizleme → GCS), video için 5 önizleme karesi. Karesi/küçük resmi hazır
  * olan dosyada `needs_tagging: true` açılır → ai_worker.py AI etiketlemeyi
  * alır. Videonun KENDİSİ yüklenmez: panelde "Oynatmak için yükle" düğmesi
- * `upload_requested: true` yazar, bu worker o isteği önce işler.
+ * `upload_requested: true` yazar, bu worker o isteği önce işler. Yüklenen şey
+ * orijinal (4K HEVC, 1-2 GB) değil, 720p H.264 "proxy" kopyadır
+ * (`proxies/{id}.mp4`, ~20-50 MB, her tarayıcıda oynar). 2026 videoları için
+ * proxy arka planda kendiliğinden üretilir (`needs_proxy: true` kuyruğu).
  *
  * Öncelik: `enrichTier` 1=CREATIVE/2026 … 4=2023 (yeni → eski), sonra tier'sız.
  * Her dosya bitince bayrak düşer (checkpoint) — kesinti iş kaybettirmez.
@@ -114,7 +117,8 @@ async function enrichOne(doc) {
 
   if (isVideoFile(p)) {
     const frames = await extractVideoFrames(p, id);
-    update.videoUploaded = false; // video GCS'te değil — panelden isteğe bağlı yüklenir
+    update.videoUploaded = false; // video GCS'te değil — proxy kuyruğu ya da panelden istek yükler
+    if (PROXY_RE.test(p)) update.needs_proxy = true;
     if (frames) {
       update.videoPreviewFrames = frames;
       update.needs_tagging = true;
@@ -154,24 +158,86 @@ async function enrichOne(doc) {
   return update.enrichStatus;
 }
 
+// ---- Video proxy: 720p H.264 (+AAC), tarayıcıda her yerde oynar, ~50x küçük ----
+const PROXY_RE = /^\/Volumes\/TRIBAL\/THY\/[^/]+\/2026\//; // otomatik proxy kapsamı
+const PROXY_FILTER = "scale='min(1280,iw)':'min(1280,ih)':force_original_aspect_ratio=decrease:force_divisible_by=2";
+
+async function makeProxy(srcPath, id) {
+  const out = path.join(os.tmpdir(), `proxy-${id}.mp4`);
+  const common = ['-hide_banner', '-loglevel', 'error', '-y'];
+  const tail = ['-vf', PROXY_FILTER, '-pix_fmt', 'yuv420p', '-map', '0:v:0', '-map', '0:a:0?'];
+  const audio = ['-c:a', 'aac', '-b:a', '128k', '-movflags', '+faststart', out];
+  const opts = { timeout: 45 * 60 * 1000, maxBuffer: 8 << 20 };
+  try {
+    // Donanım (VideoToolbox) — 4K HEVC için ~1.5x gerçek zaman
+    await execFilePromise('ffmpeg', [...common, '-hwaccel', 'videotoolbox', '-i', srcPath, ...tail, '-c:v', 'h264_videotoolbox', '-b:v', '3500k', ...audio], opts);
+  } catch (e) {
+    // Yazılım yedeği (donanım çözemeyen codec'ler)
+    await execFilePromise('ffmpeg', [...common, '-i', srcPath, ...tail, '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '26', ...audio], opts);
+  }
+  return out;
+}
+
+async function proxyOne(doc) {
+  const d = doc.data();
+  await beat('proxy', d.name);
+  let tmp = null;
+  try {
+    if (!fs.existsSync(d.path)) throw new Error('dosya sunucuda bulunamadı (paylaşım bağlı mı?)');
+    tmp = await makeProxy(d.path, doc.id);
+    await bucket.upload(tmp, { destination: `proxies/${doc.id}.mp4`, metadata: { contentType: 'video/mp4', cacheControl: 'public, max-age=86400' } });
+    await doc.ref.update({
+      videoProxy: true, videoUploaded: true, needs_proxy: FieldValue.delete(),
+      upload_requested: FieldValue.delete(), uploadError: FieldValue.delete(), proxyError: FieldValue.delete(),
+    });
+    console.log(`  ▶ proxy hazır: ${d.name} (${(fs.statSync(tmp).size / 1e6).toFixed(0)} MB)`);
+  } catch (e) {
+    const msg = String(e.message || e).slice(0, 300);
+    await doc.ref.update({ needs_proxy: FieldValue.delete(), upload_requested: FieldValue.delete(), uploadError: msg, proxyError: msg }).catch(() => {});
+    console.log(`  ✗ proxy hatası: ${d.name} — ${msg.split('\n')[0]}`);
+  } finally {
+    if (tmp) fs.rmSync(tmp, { force: true });
+  }
+}
+
+// Panelden gelen "Oynatmak için yükle" istekleri (öncelikli)
 async function handleUploadRequests() {
   const snap = await db.collection('files').where('upload_requested', '==', true).limit(5).get();
-  for (const doc of snap.docs) {
-    const d = doc.data();
-    await beat('uploading', d.name);
-    try {
-      if (!fs.existsSync(d.path)) throw new Error('dosya sunucuda bulunamadı (paylaşım bağlı mı?)');
-      const objectName = `${doc.id}.${(d.extension || '').toLowerCase()}`;
-      const [exists] = await bucket.file(objectName).exists();
-      if (!exists) await bucket.upload(d.path, { destination: objectName });
-      await doc.ref.update({ videoUploaded: true, upload_requested: FieldValue.delete(), uploadError: FieldValue.delete() });
-      console.log(`  ⬆ yüklendi: ${d.name}`);
-    } catch (e) {
-      await doc.ref.update({ upload_requested: FieldValue.delete(), uploadError: String(e.message || e) });
-      console.log(`  ✗ yükleme hatası: ${d.name} — ${e.message}`);
-    }
-  }
+  for (const doc of snap.docs) await proxyOne(doc);
   return snap.size;
+}
+
+// Arka plan kuyruğu: needs_proxy (2026 videoları)
+async function handleProxyQueue() {
+  const snap = await db.collection('files').where('needs_proxy', '==', true).limit(2).get();
+  await Promise.all(snap.docs.map(proxyOne));
+  return snap.size;
+}
+
+// Mevcut 2026 videolarını proxy kuyruğuna al (kopya/gizli olmayan, proxy'si olmayan)
+async function queueProxies() {
+  let n = 0;
+  for (const root of ['CREATIVE', 'ACCOUNT', 'SOCIAL', 'DIGITAL', 'STRATEGY'].map((r) => `/Volumes/TRIBAL/THY/${r}/2026/`)) {
+    let last = null;
+    for (;;) {
+      let q = db.collection('files').where('path', '>=', root).where('path', '<', root + '\uffff')
+        .orderBy('path').select('path', 'mimeType', 'isDuplicate', 'videoProxy', 'needs_proxy').limit(500);
+      if (last) q = q.startAfter(last);
+      const snap = await q.get();
+      if (snap.empty) break;
+      const batch = db.batch();
+      let c = 0;
+      for (const d of snap.docs) {
+        if ((d.get('mimeType') || '').startsWith('video/') && d.get('isDuplicate') !== true && d.get('videoProxy') !== true && d.get('needs_proxy') !== true) {
+          batch.update(d.ref, { needs_proxy: true }); c++;
+        }
+      }
+      if (c) await batch.commit();
+      n += c;
+      last = snap.docs[snap.docs.length - 1];
+    }
+    console.log(`  ${root} → toplam kuyrukta ${n}`);
+  }
 }
 
 async function nextBatch() {
@@ -210,6 +276,7 @@ async function assignTiers() {
 async function main() {
   const args = process.argv.slice(2);
   if (args.includes('--assign-tiers')) { await assignTiers(); return; }
+  if (args.includes('--queue-proxies')) { await queueProxies(); return; }
   const once = args.includes('--once');
   const mi = args.indexOf('--max-docs');
   const maxDocs = mi >= 0 ? parseInt(args[mi + 1], 10) : Infinity;
@@ -225,6 +292,7 @@ async function main() {
     if (await handleUploadRequests()) continue;
     const docs = await nextBatch();
     if (!docs.length) {
+      if (await handleProxyQueue()) continue;
       if (once) { console.log('Kuyruk boş.'); return; }
       await beat('idle');
       await sleep(IDLE_SLEEP_MS);

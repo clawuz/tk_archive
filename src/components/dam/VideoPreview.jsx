@@ -114,7 +114,7 @@ export default function VideoPreview({ file }) {
       // (not file.source) since local files with a Drive-hosted preview
       // (scannerLocalPreview.cjs) also stream from Drive and file.size still
       // reflects the multi-GB original, not the small preview.
-      if (!file.driveFileId && isFileTooLarge(file.size)) {
+      if (!file.driveFileId && !file.videoProxy && isFileTooLarge(file.size)) {
         setError(`File too large (${getFileSize(file.size)}). Download to play locally.`);
         setCanPreview(false);
         return;
@@ -131,7 +131,7 @@ export default function VideoPreview({ file }) {
     }
   }, [file]);
 
-  if (needsUpload && !error && !isFileTooLarge(file.size)) {
+  if (needsUpload && !error) {
     const poster = file.videoPreviewFrames?.[0]?.frameData;
     return (
       <div className="bg-black rounded-lg overflow-hidden mb-4">
@@ -148,7 +148,7 @@ export default function VideoPreview({ file }) {
             {uploading ? (
               <>
                 <p className="text-sm font-medium">Yükleniyor… ({getFileSize(file.size)})</p>
-                <p className="text-xs text-white/70 mt-1">Dosya sunucudan kopyalanıyor, birkaç dakika sürebilir. Bitince burada otomatik açılır.</p>
+                <p className="text-xs text-white/70 mt-1">Küçük bir önizleme kopyası hazırlanıyor (yaklaşık 1 dakika). Bitince burada otomatik açılır.</p>
               </>
             ) : (
               <>
@@ -159,7 +159,7 @@ export default function VideoPreview({ file }) {
                 >
                   Oynatmak için yükle
                 </button>
-                <p className="text-xs text-white/70 mt-2">Bu video henüz akış için hazır değil ({getFileSize(file.size)}).</p>
+                <p className="text-xs text-white/70 mt-2">Önizleme kopyası henüz hazır değil (orijinal {getFileSize(file.size)}).</p>
               </>
             )}
             {uploadErr && <p className="text-xs text-red-300 mt-2">{uploadErr}</p>}
