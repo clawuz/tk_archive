@@ -223,6 +223,7 @@ export interface DAMGroup {
   parent?: string
   order?: number
   fileCount?: number
+  collapsed?: boolean // alt konular varsayılan kapalı
 }
 
 /**

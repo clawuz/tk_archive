@@ -13,6 +13,7 @@ const MEDIA_TYPE_LABELS = {
 export default function SearchFilters({ filters, onChange }) {
   const [tags, setTags] = useState([])
   const [groups, setGroups] = useState([])
+  const [openGroups, setOpenGroups] = useState([])
   const [selectedSources, setSelectedSources] = useState(filters.sources || ['local', 'drive'])
   // Derived straight from the prop, not mirrored into local state — tags can
   // also be selected from SearchBar.jsx's suggestion dropdown, so a local
@@ -336,29 +337,48 @@ export default function SearchFilters({ filters, onChange }) {
               <TagIcon size={15} /> Konu Grupları
             </label>
             <div className="space-y-1.5">
-              {groups.map((g) => (
-                <label key={g.groupId} className={`flex items-center ${g.parent ? 'ml-5' : ''}`}>
-                  <input
-                    type="checkbox"
-                    checked={selectedGroups.includes(g.groupId)}
-                    onChange={() => handleGroupToggle(g.groupId)}
-                    className="rounded border-slate-300 text-blue-600 focus:ring-blue-500 cursor-pointer"
-                  />
-                  <span
-                    className="ml-2 inline-block w-2 h-2 rounded-full"
-                    style={{ background: g.color || '#64748b' }}
-                  />
-                  <span
-                    className={`ml-1.5 text-sm text-slate-700 dark:text-slate-300 ${g.parent ? '' : 'font-medium'}`}
-                    title={g.description || undefined}
-                  >
-                    {g.name}
-                  </span>
-                  {typeof g.fileCount === 'number' && (
-                    <span className="ml-auto text-xs text-slate-500 dark:text-slate-400">({g.fileCount})</span>
-                  )}
-                </label>
-              ))}
+              {groups.filter((g) => !g.parent).map((root) => {
+                const kids = groups.filter((k) => k.parent === root.groupId)
+                const open = !root.collapsed || openGroups.includes(root.groupId) || kids.some((k) => selectedGroups.includes(k.groupId))
+                const renderRow = (g, child) => (
+                  <label key={g.groupId} className={`flex items-center ${child ? 'ml-5' : ''}`}>
+                    <input
+                      type="checkbox"
+                      checked={selectedGroups.includes(g.groupId)}
+                      onChange={() => handleGroupToggle(g.groupId)}
+                      className="rounded border-slate-300 text-blue-600 focus:ring-blue-500 cursor-pointer"
+                    />
+                    <span className="ml-2 inline-block w-2 h-2 rounded-full" style={{ background: g.color || '#64748b' }} />
+                    <span
+                      className={`ml-1.5 text-sm text-slate-700 dark:text-slate-300 ${child ? '' : 'font-medium'}`}
+                      title={g.description || undefined}
+                    >
+                      {g.name}
+                    </span>
+                    {typeof g.fileCount === 'number' && (
+                      <span className="ml-auto text-xs text-slate-500 dark:text-slate-400">({g.fileCount})</span>
+                    )}
+                  </label>
+                )
+                return (
+                  <div key={root.groupId} className="space-y-1.5">
+                    <div className="flex items-center gap-1">
+                      {kids.length > 0 && root.collapsed ? (
+                        <button
+                          type="button"
+                          onClick={() => setOpenGroups((o) => (o.includes(root.groupId) ? o.filter((x) => x !== root.groupId) : [...o, root.groupId]))}
+                          className="w-4 text-xs text-slate-500 dark:text-slate-400"
+                          aria-label={open ? 'Alt konuları gizle' : 'Alt konuları göster'}
+                        >
+                          {open ? '▾' : '▸'}
+                        </button>
+                      ) : null}
+                      <div className="flex-1">{renderRow(root, false)}</div>
+                    </div>
+                    {open && kids.map((k) => renderRow(k, true))}
+                  </div>
+                )
+              })}
             </div>
           </div>
         )}

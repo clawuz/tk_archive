@@ -71,6 +71,50 @@ DEFAULT_GROUPS = [
 ]
 
 
+def _d(day, month):
+    # "23 Nisan" / "23-nisan" / "23nisan" — ay KLASÖRLERİ ("10-EKIM") ve 2023-nisan gibi yıl/ay yazımlarıyla karışmasın
+    return rf"(?<![0-9])0?{day}-?{month}(?![a-z])"
+
+
+# (id, ad, [alt-dizgi], [regex])  — takvim sırasıyla
+SPECIAL_DAYS = [
+    ("yilbasi", "Yılbaşı", ["yeni-yil", "yilbasi", "new-year"], []),
+    ("14-subat", "14 Şubat Sevgililer Günü", ["sevgililer-gunu", "valentine"], [_d(14, "subat")]),
+    ("8-mart", "8 Mart Dünya Kadınlar Günü", ["kadinlar-gunu", "dunya-kadinlar"], [_d(8, "mart")]),
+    ("22-mart", "22 Mart Dünya Su Günü", ["dunya-su-gunu"], [_d(22, "mart")]),
+    ("30-mart", "30 Mart Sıfır Atık Günü", ["sifir-atik"], []),
+    ("23-nisan", "23 Nisan Ulusal Egemenlik ve Çocuk Bayramı", ["ulusal-egemenlik", "23nisan"], [_d(23, "nisan")]),
+    ("1-mayis", "1 Mayıs Emek ve Dayanışma Günü", ["emek-ve-dayanisma", "isci-bayrami"], [_d(1, "mayis")]),
+    ("anneler-gunu", "Anneler Günü", ["anneler-gunu", "mothers-day"], []),
+    ("19-mayis", "19 Mayıs Gençlik ve Spor Bayramı", ["genclik-ve-spor-bayrami"], [_d(19, "mayis")]),
+    ("24-mayis", "24 Mayıs Uçak Teknisyenleri Günü", ["ucak-teknisyenleri"], []),
+    ("25-mayis", "25 Mayıs Afrika Günü", ["afrika-gunu"], [_d(25, "mayis")]),
+    ("babalar-gunu", "Babalar Günü", ["babalar-gunu", "fathers-day"], []),
+    ("kedi-gunu", "Dünya Kedi Günü", ["kedi-gunu"], []),
+    ("19-agustos", "19 Ağustos Dünya Fotoğrafçılık Günü", ["fotografcilik-gunu"], [_d(19, "agustos")]),
+    ("30-agustos", "30 Ağustos Zafer Bayramı", ["30agustos", "zafer-bayrami"], [_d(30, "agustos")]),
+    ("27-eylul", "27 Eylül Dünya Turizm Günü", ["dunya-turizm-gunu"], [_d(27, "eylul")]),
+    ("kahve-gunu", "Dünya Kahve Günü", ["dunya-kahve-gunu"], []),
+    ("20-ekim", "20 Ekim Hava Trafik Kontrolörleri Günü", ["hava-trafik-kontrol"], []),
+    ("29-ekim", "29 Ekim Cumhuriyet Bayramı", ["cumhuriyet-bayrami", "29ekim"], [_d(29, "ekim")]),
+    ("10-kasim", "10 Kasım Atatürk'ü Anma Günü", ["10kasim", "ataturku-anma"], [_d(10, "kasim")]),
+    ("merhaba-gunu", "21 Kasım Dünya Merhaba Günü", ["merhaba-gunu"], []),
+    ("24-kasim", "24 Kasım Öğretmenler Günü", ["ogretmenler-gunu"], [_d(24, "kasim")]),
+    ("cay-gunu", "15 Aralık Dünya Çay Günü", ["cay-gunu"], []),
+    ("ramazan-bayrami", "Ramazan Bayramı", ["seker-bayrami"], [r"(?<![a-z])ramazan(?![a-z])"]),
+    ("kurban-bayrami", "Kurban Bayramı", ["kurban-bayram"], []),
+]
+for _i, (_id, _name, _contains, _rx) in enumerate(SPECIAL_DAYS):
+    DEFAULT_GROUPS.append({
+        "id": _id, "parent": "ozel-gunler", "name": _name, "color": "#be185d", "order": 31 + _i,
+        "description": "", "rules": {"pathContains": _contains, "pathRegex": _rx},
+    })
+DEFAULT_GROUPS.append({
+    "id": "ozel-gunler", "name": "Özel Günler", "color": "#be185d", "order": 30, "collapsed": True,
+    "description": "Resmi/ulusal günler, dini bayramlar, dünya günleri ve diğer özel gün içerikleri", "rules": {},
+})
+
+
 def norm(s):
     if not s:
         return ""
@@ -102,7 +146,7 @@ def matches(c, fid, raw_path, npath, tags, text):
     if fid in c["incIds"] or any(raw_path.startswith(p) for p in c["incPaths"]):
         return True
     # Drive kaynaklı dosyalarda yol bir kimliktir; klasör adları klasörden türeyen etiketlerde durur
-    if any(p in npath or any(p in t for t in tags) for p in c["path"]) or any(rx.search(npath) for rx in c["regex"]):
+    if any(p in npath or any(p in t for t in tags) for p in c["path"]) or any(rx.search(npath) or any(rx.search(t) for t in tags) for rx in c["regex"]):
         return True
     if c["tags"] and tags & c["tags"]:
         return True
