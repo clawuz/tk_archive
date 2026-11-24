@@ -330,58 +330,86 @@ export default function SearchFilters({ filters, onChange }) {
           </div>
         )}
 
-        {/* Konu Grupları (İK, Take-Off, Meslekler …) — tag_groups kurallarıyla dosyalara yazılır */}
-        {groups.length > 0 && (
-          <div>
-            <label className="flex items-center gap-1.5 text-sm font-medium text-slate-900 dark:text-white mb-2">
-              <TagIcon size={15} /> Konu Grupları
+        {/* Konu Grupları — tag_groups kurallarıyla dosyalara yazılır. `collapsed` işaretli üst gruplar
+            (Özel Günler) listeye karışmaz: kendi başlığı ve açılır alt konuları olan ayrı bir bölümdür. */}
+        {groups.length > 0 && (() => {
+          const roots = groups.filter((g) => !g.parent)
+          const plain = roots.filter((g) => !g.collapsed)
+          const sections = roots.filter((g) => g.collapsed)
+          const childrenOf = (id) => groups.filter((k) => k.parent === id)
+          const row = (g, child) => (
+            <label key={g.groupId} className={`flex items-center ${child ? 'ml-5' : ''}`}>
+              <input
+                type="checkbox"
+                checked={selectedGroups.includes(g.groupId)}
+                onChange={() => handleGroupToggle(g.groupId)}
+                className="rounded border-slate-300 text-blue-600 focus:ring-blue-500 cursor-pointer"
+              />
+              <span className="ml-2 inline-block w-2 h-2 rounded-full" style={{ background: g.color || '#64748b' }} />
+              <span
+                className={`ml-1.5 text-sm text-slate-700 dark:text-slate-300 ${child ? '' : 'font-medium'}`}
+                title={g.description || undefined}
+              >
+                {g.name}
+              </span>
+              {typeof g.fileCount === 'number' && (
+                <span className="ml-auto text-xs text-slate-500 dark:text-slate-400">({g.fileCount})</span>
+              )}
             </label>
-            <div className="space-y-1.5">
-              {groups.filter((g) => !g.parent).map((root) => {
-                const kids = groups.filter((k) => k.parent === root.groupId)
-                const open = !root.collapsed || openGroups.includes(root.groupId) || kids.some((k) => selectedGroups.includes(k.groupId))
-                const renderRow = (g, child) => (
-                  <label key={g.groupId} className={`flex items-center ${child ? 'ml-5' : ''}`}>
-                    <input
-                      type="checkbox"
-                      checked={selectedGroups.includes(g.groupId)}
-                      onChange={() => handleGroupToggle(g.groupId)}
-                      className="rounded border-slate-300 text-blue-600 focus:ring-blue-500 cursor-pointer"
-                    />
-                    <span className="ml-2 inline-block w-2 h-2 rounded-full" style={{ background: g.color || '#64748b' }} />
-                    <span
-                      className={`ml-1.5 text-sm text-slate-700 dark:text-slate-300 ${child ? '' : 'font-medium'}`}
-                      title={g.description || undefined}
-                    >
-                      {g.name}
-                    </span>
-                    {typeof g.fileCount === 'number' && (
-                      <span className="ml-auto text-xs text-slate-500 dark:text-slate-400">({g.fileCount})</span>
-                    )}
+          )
+          return (
+            <>
+              {plain.length > 0 && (
+                <div>
+                  <label className="flex items-center gap-1.5 text-sm font-medium text-slate-900 dark:text-white mb-2">
+                    <TagIcon size={15} /> Konu Grupları
                   </label>
-                )
+                  <div className="space-y-1.5">
+                    {plain.map((root) => (
+                      <div key={root.groupId} className="space-y-1.5">
+                        {row(root, false)}
+                        {childrenOf(root.groupId).map((k) => row(k, true))}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+              {sections.map((root) => {
+                const kids = childrenOf(root.groupId)
+                const open = openGroups.includes(root.groupId) || kids.some((k) => selectedGroups.includes(k.groupId))
                 return (
-                  <div key={root.groupId} className="space-y-1.5">
-                    <div className="flex items-center gap-1">
-                      {kids.length > 0 && root.collapsed ? (
+                  <div key={root.groupId} className="border-t border-slate-200 dark:border-slate-700 pt-4">
+                    <div className="flex items-center justify-between mb-2">
+                      <label className="flex items-center gap-1.5 text-sm font-medium text-slate-900 dark:text-white cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={selectedGroups.includes(root.groupId)}
+                          onChange={() => handleGroupToggle(root.groupId)}
+                          className="rounded border-slate-300 text-blue-600 focus:ring-blue-500 cursor-pointer"
+                        />
+                        <span className="inline-block w-2 h-2 rounded-full" style={{ background: root.color || '#64748b' }} />
+                        {root.name}
+                        {typeof root.fileCount === 'number' && (
+                          <span className="text-xs font-normal text-slate-500 dark:text-slate-400">({root.fileCount})</span>
+                        )}
+                      </label>
+                      {kids.length > 0 && (
                         <button
                           type="button"
                           onClick={() => setOpenGroups((o) => (o.includes(root.groupId) ? o.filter((x) => x !== root.groupId) : [...o, root.groupId]))}
-                          className="w-4 text-xs text-slate-500 dark:text-slate-400"
-                          aria-label={open ? 'Alt konuları gizle' : 'Alt konuları göster'}
+                          className="text-xs text-blue-600 dark:text-blue-400 hover:underline"
                         >
-                          {open ? '▾' : '▸'}
+                          {open ? 'Günleri gizle' : `Günleri göster (${kids.length})`}
                         </button>
-                      ) : null}
-                      <div className="flex-1">{renderRow(root, false)}</div>
+                      )}
                     </div>
-                    {open && kids.map((k) => renderRow(k, true))}
+                    {open && <div className="space-y-1.5 max-h-72 overflow-y-auto">{kids.map((k) => row(k, true))}</div>}
                   </div>
                 )
               })}
-            </div>
-          </div>
-        )}
+            </>
+          )
+        })()}
 
         {/* Tags Filter */}
         {tags.length > 0 && (
