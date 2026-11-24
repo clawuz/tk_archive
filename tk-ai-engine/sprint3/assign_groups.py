@@ -63,6 +63,11 @@ DEFAULT_GROUPS = [
         "description": "Kabin memuru, pilot, kokpit ve dispeçer görüntüleri (AI etiketlerine göre; İK grubundan ayrı)",
         "rules": {"tags": ["kabin-memuru", "pilot", "kokpit", "dispecer"]},
     },
+    {
+        "id": "telif-pdf", "name": "Telif PDF", "color": "#b45309", "order": 20,
+        "description": "Telif.pdf (23/02/2026) listesindeki projelerin telif/lisans bilgisi işlenen dosyalar",
+        "rules": {"tags": ["telif-dokumani-2026"]},
+    },
 ]
 
 
