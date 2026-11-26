@@ -5,6 +5,7 @@ import VideoPreview from './VideoPreview'
 import FileDownload from './FileDownload'
 import FolderBrowser from './FolderBrowser'
 import { useAuth } from '../../auth/AuthProvider'
+import { frameSrc } from '../../utils/frameSrc'
 
 const LICENSE_TYPES = ['commercial', 'RF', 'RM', 'custom']
 
@@ -264,7 +265,7 @@ export default function FileDetail({
               <img
                 src={
                   hasVideoFrames
-                    ? `data:image/jpeg;base64,${file.videoPreviewFrames[selectedFrameIndex]?.frameData}`
+                    ? frameSrc(file.videoPreviewFrames[selectedFrameIndex])
                     : file.thumbnailUrl
                 }
                 alt={file.name}
@@ -308,7 +309,7 @@ export default function FileDetail({
                     }`}
                   >
                     <img
-                      src={`data:image/jpeg;base64,${frame.frameData}`}
+                      src={frameSrc(frame)}
                       alt={`Kare ${frame.frameNumber}`}
                       className="w-full h-full object-cover"
                     />

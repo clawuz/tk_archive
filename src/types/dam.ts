@@ -69,9 +69,13 @@ export interface DAMFile {
   // Preview fields (Tasks 1-4)
   streamable?: boolean
   previewUrl?: string
+  // A frame is either inline (`frameData`, base64 JPEG — legacy) or stored in
+  // Cloud Storage (`url`). Readers accept both; see frameSrc() in
+  // src/utils/frameSrc.ts.
   videoPreviewFrames?: Array<{
     timestamp: number
-    frameData: string
+    frameData?: string
+    url?: string
     frameNumber: number
   }>
 

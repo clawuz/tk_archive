@@ -10,7 +10,7 @@ export interface YOLOTag {
  * Tag video frames using YOLO model via Cloud Function.
  * Sends frame data to tagNewFiles cloud function for batch processing.
  */
-export async function tagFrames(frames: Array<{ frameData: string }>): Promise<string[]> {
+export async function tagFrames(frames: Array<{ frameData?: string; url?: string }>): Promise<string[]> {
   try {
     const functions = getFunctions();
     const tagFunction = httpsCallable(functions, 'tagNewFiles');

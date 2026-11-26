@@ -14,6 +14,7 @@ const { promisify } = require('util');
 const { extractAutoTags } = require('./lib/autoTags.cjs');
 const { isVideoFile, extractVideoFrames } = require('./lib/videoFrames.cjs');
 const { generateSearchTokens } = require('./lib/searchTokens.cjs');
+const { uploadThumbnail, uploadFrames } = require('./lib/mediaStorage.cjs');
 
 const execFilePromise = promisify(execFile);
 
@@ -51,6 +52,11 @@ const db = admin.firestore();
 // player once uploaded.
 const VIDEO_BUCKET = 'tk-archive-cd9d0-videos';
 
+// Thumbnails (thumbs/) and video preview frames (frames/) go to the same
+// bucket instead of being inlined as base64 in the Firestore document — see
+// lib/mediaStorage.cjs.
+const mediaBucket = admin.storage().bucket(VIDEO_BUCKET);
+
 async function uploadVideoIfNeeded(fullPath, fileId, ext) {
   const objectName = `${fileId}.${ext.toLowerCase()}`;
   const bucket = admin.storage().bucket(VIDEO_BUCKET);
@@ -66,6 +72,14 @@ const FORCE_SCAN = process.argv[3] === '--force';
 
 console.log(`📂 Scanning: ${ARCHIVE_ROOT}`);
 console.log(`🔄 Force: ${FORCE_SCAN}\n`);
+
+// Incremental scan state. `existingLocal` maps fileId -> { size, modifiedAt }
+// of every local file already in Firestore (loaded once in run(), without the
+// heavy thumbnail/frame fields). A file whose size and mtime still match is
+// skipped entirely: no hashing, no frame/thumbnail extraction, no Firestore
+// read or write, no storage `exists()` call. `--force` bypasses this.
+const existingLocal = new Map();
+const scanStats = { unchanged: 0, unchangedBytes: 0 };
 
 async function calculateHash(filePath) {
   return new Promise((resolve, reject) => {
@@ -94,22 +108,31 @@ async function scanDirectory(dirPath, scanId) {
           const stat = fs.statSync(fullPath);
           const ext = path.extname(entry.name).toLowerCase().slice(1);
 
+          // Deterministic fileId based on file path — same file always
+          // gets the same ID, so re-scans update the existing document
+          // instead of creating duplicates.
+          const fileId = crypto.createHash('sha256').update(`local:${fullPath}`).digest('hex').slice(0, 32);
+
+          // Unchanged since the last scan (same size + mtime): skip it.
+          const known = existingLocal.get(fileId);
+          if (known && known.size === stat.size && known.modifiedAt === stat.mtime.getTime()) {
+            scanStats.unchanged++;
+            scanStats.unchangedBytes += stat.size;
+            continue;
+          }
+
           // Get MIME type (basic)
           const mimeType = getMimeType(ext);
 
           // Calculate hash
           const hash = await calculateHash(fullPath);
 
-          // Deterministic fileId based on file path — same file always
-          // gets the same ID, so re-scans update the existing document
-          // instead of creating duplicates.
-          const fileId = crypto.createHash('sha256').update(`local:${fullPath}`).digest('hex').slice(0, 32);
-
           // Extract video frames if video file
           let videoPreviewFrames = null;
           if (isVideoFile(fullPath)) {
             videoPreviewFrames = await extractVideoFrames(fullPath, fileId);
             if (videoPreviewFrames) {
+              videoPreviewFrames = await uploadFrames(mediaBucket, fileId, videoPreviewFrames);
               console.log(`\n✅ Extracted ${videoPreviewFrames.length} frames from ${entry.name}`);
             }
             try {
@@ -125,7 +148,7 @@ async function scanDirectory(dirPath, scanId) {
             const thumbData = await generateThumbnail(fullPath, fileId);
             if (thumbData) {
               thumbnail = {
-                url: `data:image/png;base64,${thumbData}`,
+                url: await uploadThumbnail(mediaBucket, fileId, thumbData),
                 generated: true,
                 generatedAt: Date.now()
               };
@@ -276,10 +299,22 @@ async function run() {
 
     console.log(`\n✅ Created scan: ${scanId}\n`);
 
-    // Scan directory
+    // Load what is already in Firestore for local files — only size and
+    // modifiedAt, so the multi-KB thumbnail/frame fields are not downloaded.
+    if (!FORCE_SCAN) {
+      console.log(`🔎 Loading known local files (size + modifiedAt only)...`);
+      const known = db.collection('files').where('source', '==', 'local').select('size', 'modifiedAt');
+      for await (const doc of known.stream()) {
+        const d = doc.data();
+        existingLocal.set(doc.id, { size: d.size, modifiedAt: d.modifiedAt });
+      }
+      console.log(`  ${existingLocal.size} files already known\n`);
+    }
+
+    // Scan directory (unchanged files are skipped inside scanDirectory)
     console.log(`🔍 Scanning directory...`);
     const files = await scanDirectory(ARCHIVE_ROOT, scanId);
-    console.log(`\n📁 Found ${files.length} files\n`);
+    console.log(`\n📁 ${files.length} new/changed, ${scanStats.unchanged} unchanged (skipped)\n`);
 
     // Preserve curation from previous scans — tags (manual and Claude
     // Vision), copyright/rights edits. Each write below is a full
@@ -364,27 +399,29 @@ async function run() {
 
     // Update scan with results
     const duration = Date.now() - startTime;
-    const totalSizeBytes = files.reduce((sum, f) => sum + f.size, 0);
+    const totalSizeBytes = files.reduce((sum, f) => sum + f.size, 0) + scanStats.unchangedBytes;
+    const totalFiles = files.length + scanStats.unchanged;
+    const newFiles = files.filter((f) => !existingLocal.has(f.fileId)).length;
 
     await scanRef.update({
       status: 'completed',
       completedAt: admin.firestore.Timestamp.now(),
       duration,
       results: {
-        totalFiles: files.length,
+        totalFiles,
         totalSizeBytes,
         totalSizeGB: Math.round(totalSizeBytes / 1024 / 1024 / 1024 * 100) / 100,
-        newFiles: files.length,
+        newFiles,
         deletedFiles: 0,
-        modifiedFiles: 0,
-        unchangedFiles: 0,
+        modifiedFiles: files.length - newFiles,
+        unchangedFiles: scanStats.unchanged,
         fileTypes: {}
       }
     });
 
     console.log(`✨ Scan completed!`);
     console.log(`⏱️  Duration: ${Math.round(duration / 1000)}s`);
-    console.log(`📊 Total files: ${files.length}`);
+    console.log(`📊 Total files: ${totalFiles} (${newFiles} new, ${files.length - newFiles} modified, ${scanStats.unchanged} unchanged)`);
     console.log(`💾 Total size: ${Math.round(totalSizeBytes / 1024 / 1024 / 1024 * 100) / 100} GB\n`);
 
     process.exit(0);
