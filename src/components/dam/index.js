@@ -1,5 +1,3 @@
 export { default as DAMDashboard } from './DAMDashboard'
 export { default as FileGallery } from './FileGallery'
 export { default as SearchFilters } from './SearchFilters'
-export { default as FileDetail } from './FileDetail'
-export { default as ScanTimeline } from './ScanTimeline'

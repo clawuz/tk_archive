@@ -1,12 +1,15 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, lazy, Suspense } from 'react'
 import damService, { getScanHistory } from '../../services/damService'
 import FileGallery from './FileGallery'
 import SearchFilters from './SearchFilters'
 import SearchBar from './SearchBar'
-import FileDetail from './FileDetail'
-import ScanTimeline from './ScanTimeline'
+// Detail modal, scan history and users panel are not needed for the first
+// paint — loaded as separate chunks (FileDetail is also prefetched when idle).
+const loadFileDetail = () => import('./FileDetail')
+const FileDetail = lazy(loadFileDetail)
+const ScanTimeline = lazy(() => import('./ScanTimeline'))
 import HeroAnimation from './HeroAnimation'
-import UsersPanel from './UsersPanel'
+const UsersPanel = lazy(() => import('./UsersPanel'))
 import VideoPreview from './VideoPreview'
 import { getImagePreviewUrl } from '../../services/streamingService'
 import {
@@ -24,6 +27,18 @@ const PAGE_SIZE = 60
 const FETCH_BATCH_SIZE = 100
 
 export default function DAMDashboard() {
+  // Warm the detail-modal chunk once the first screen is idle so the first
+  // click on a file doesn't wait for a network round trip.
+  useEffect(() => {
+    const warm = () => { loadFileDetail().catch(() => {}) }
+    if (typeof window.requestIdleCallback === 'function') {
+      const h = window.requestIdleCallback(warm, { timeout: 4000 })
+      return () => window.cancelIdleCallback && window.cancelIdleCallback(h)
+    }
+    const t = setTimeout(warm, 2500)
+    return () => clearTimeout(t)
+  }, [])
+
   // Gallery state — loadedFiles accumulates every filtered file fetched so
   // far across visited pages (an archive of thousands never loads at once;
   // Firestore is paged with a cursor, one or two batches ahead of the page
@@ -356,7 +371,9 @@ export default function DAMDashboard() {
               were visible — desktop-only where it sits beside the gallery
               instead of on top of it. */}
           <div className="hidden lg:block">
-            <ScanTimeline scans={scanHistory} />
+            <Suspense fallback={null}>
+              <ScanTimeline scans={scanHistory} />
+            </Suspense>
           </div>
         </div>
 
@@ -407,7 +424,11 @@ export default function DAMDashboard() {
 
       </div>
 
-      {showUsers && <UsersPanel onClose={() => setShowUsers(false)} />}
+      {showUsers && (
+        <Suspense fallback={null}>
+          <UsersPanel onClose={() => setShowUsers(false)} />
+        </Suspense>
+      )}
 
       {/* File Detail — a large modal over the result grid rather than a
           column that used to shrink the gallery and force scrolling back
@@ -421,13 +442,17 @@ export default function DAMDashboard() {
           }}
         >
           <div className="w-full sm:max-w-3xl sm:my-8 bg-white dark:bg-slate-800 sm:rounded-xl shadow-2xl min-h-screen sm:min-h-0 sm:max-h-[88vh] flex flex-col">
-            <FileDetail
-              file={selectedFile}
-              onClose={() => setShowDetail(false)}
-              onOpenLightbox={() => setShowLightbox(true)}
-              onShowPreview={() => setShowLightbox(true)}
-              onFileUpdate={handleFileUpdate}
-            />
+            <Suspense
+              fallback={<div className="p-10 text-center text-sm text-slate-500">Yükleniyor…</div>}
+            >
+              <FileDetail
+                file={selectedFile}
+                onClose={() => setShowDetail(false)}
+                onOpenLightbox={() => setShowLightbox(true)}
+                onShowPreview={() => setShowLightbox(true)}
+                onFileUpdate={handleFileUpdate}
+              />
+            </Suspense>
           </div>
         </div>
       )}
