@@ -8,6 +8,7 @@ const admin = require('firebase-admin');
 const { extractAutoTags } = require('./lib/autoTags.cjs');
 const { isVideoFile, extractVideoFrames } = require('./lib/videoFrames.cjs');
 const { generateSearchTokens, aiSearchText } = require('./lib/searchTokens.cjs');
+const { uploadFrames, MEDIA_BUCKET } = require('./lib/mediaStorage.cjs');
 const { getDriveClient } = require('./lib/driveOAuth.cjs');
 const { uploadPreview } = require('./lib/drivePreviewUpload.cjs');
 const { generatePreviewIfNeeded, runWithConcurrency } = require('./lib/previewTranscode.cjs');
@@ -21,6 +22,8 @@ const serviceAccount = JSON.parse(
 );
 admin.initializeApp({ credential: admin.credential.cert(serviceAccount), projectId: 'tk-archive-cd9d0' });
 const db = admin.firestore();
+// Video preview frames are stored in Cloud Storage, not inline in Firestore.
+const mediaBucket = admin.storage().bucket(MEDIA_BUCKET);
 
 function loadRoots() {
   const config = JSON.parse(fs.readFileSync(path.join(__dirname, 'roots.json'), 'utf8'));
@@ -109,10 +112,11 @@ async function processFile(fullPath, driveClient, scanId) {
 
     const previewPath = await generatePreviewIfNeeded(fullPath);
 
-    const [hash, frames] = await Promise.all([
+    const [hash, rawFrames] = await Promise.all([
       calculateHash(fullPath),
       extractVideoFrames(fullPath, fileId),
     ]);
+    const frames = await uploadFrames(mediaBucket, fileId, rawFrames);
 
     const previewFileName = path.basename(previewPath);
     const driveFileId = await uploadPreview(driveClient, {

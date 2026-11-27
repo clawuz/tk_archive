@@ -59,6 +59,7 @@ const DuplicatesList = ({ file }) => {
     </div>
   )
 }
+import { frameSrc } from '../../utils/frameSrc'
 
 const LICENSE_TYPES = ['commercial', 'RF', 'RM', 'custom']
 
@@ -171,7 +172,7 @@ export default function FileDetail({
   // image's natural dimensions and size the box to match, so nothing
   // gets cropped regardless of orientation.
   const posterSrc = hasVideoFrames
-    ? `data:image/jpeg;base64,${file.videoPreviewFrames[selectedFrameIndex]?.frameData}`
+    ? frameSrc(file.videoPreviewFrames[selectedFrameIndex])
     : file.thumbnailUrl
   const [posterAspectRatio, setPosterAspectRatio] = useState('16 / 9')
 
@@ -430,7 +431,7 @@ export default function FileDetail({
                     }`}
                   >
                     <img
-                      src={`data:image/jpeg;base64,${frame.frameData}`}
+                      src={frameSrc(frame)}
                       alt={`Kare ${frame.frameNumber}`}
                       className="w-full h-full object-cover"
                     />

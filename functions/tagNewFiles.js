@@ -120,10 +120,24 @@ async function fetchAsBase64Image(url) {
  */
 async function buildImageBlocks(file) {
   if (file.videoPreviewFrames?.length > 0) {
-    return file.videoPreviewFrames.slice(0, 5).map((frame) => ({
-      type: 'image',
-      source: { type: 'base64', media_type: 'image/jpeg', data: frame.frameData },
-    }));
+    // A frame is inline base64 (`frameData`, legacy) or a Cloud Storage
+    // `url` (new) — fetch the latter and inline it for the API call.
+    const blocks = await Promise.all(
+      file.videoPreviewFrames.slice(0, 5).map(async (frame) => {
+        if (frame.frameData) {
+          return {
+            type: 'image',
+            source: { type: 'base64', media_type: 'image/jpeg', data: frame.frameData },
+          };
+        }
+        const fetched = frame.url ? await fetchAsBase64Image(frame.url) : null;
+        return fetched
+          ? { type: 'image', source: { type: 'base64', media_type: fetched.mediaType, data: fetched.data } }
+          : null;
+      })
+    );
+    const usable = blocks.filter(Boolean);
+    if (usable.length > 0) return usable;
   }
 
   if (file.thumbnail?.url) {

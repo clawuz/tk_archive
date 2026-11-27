@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { canStream, getStreamUrl, getFileSize, isFileTooLarge } from '../../services/streamingService';
 import { AlertTriangleIcon } from '../icons';
 import damService from '../../services/damService';
+import { frameSrc } from '../../utils/frameSrc';
 
 // Falls back to 16:9 only when the real orientation isn't known yet (older
 // Drive scans predating videoWidth/videoHeight, or a local file before its
@@ -88,7 +89,7 @@ export default function VideoPreview({ file }) {
     if (file.videoWidth && file.videoHeight) {
       setDriveAspectRatio(`${file.videoWidth} / ${file.videoHeight}`);
     } else {
-      const frame = file.videoPreviewFrames?.[0]?.frameData;
+      const frame = frameSrc(file.videoPreviewFrames?.[0]);
       if (frame) {
         const img = new Image();
         img.onload = () => {
@@ -97,7 +98,7 @@ export default function VideoPreview({ file }) {
           }
         };
         img.onerror = () => setDriveAspectRatio(DEFAULT_ASPECT_RATIO);
-        img.src = `data:image/jpeg;base64,${frame}`;
+        img.src = frame;
       } else {
         setDriveAspectRatio(DEFAULT_ASPECT_RATIO);
       }
@@ -132,14 +133,14 @@ export default function VideoPreview({ file }) {
   }, [file]);
 
   if (needsUpload && !error) {
-    const poster = file.videoPreviewFrames?.[0]?.frameData;
+    const poster = frameSrc(file.videoPreviewFrames?.[0]);
     return (
       <div className="bg-black rounded-lg overflow-hidden mb-4">
         <div
           className="relative w-full aspect-video flex items-center justify-center"
           style={
             poster
-              ? { backgroundImage: `url(data:image/jpeg;base64,${poster})`, backgroundSize: 'cover', backgroundPosition: 'center' }
+              ? { backgroundImage: `url(${poster})`, backgroundSize: 'cover', backgroundPosition: 'center' }
               : undefined
           }
         >
@@ -237,9 +238,9 @@ export default function VideoPreview({ file }) {
           }
           className="relative w-full aspect-video flex items-center justify-center group"
           style={
-            file.videoPreviewFrames?.[0]?.frameData
+            frameSrc(file.videoPreviewFrames?.[0])
               ? {
-                  backgroundImage: `url(data:image/jpeg;base64,${file.videoPreviewFrames[0].frameData})`,
+                  backgroundImage: `url(${frameSrc(file.videoPreviewFrames[0])})`,
                   backgroundSize: 'cover',
                   backgroundPosition: 'center',
                 }

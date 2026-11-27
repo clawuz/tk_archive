@@ -1,4 +1,5 @@
 import { DAMFile } from '../types/dam';
+import { frameSrc } from '../utils/frameSrc';
 
 interface ThumbnailResult {
   url: string | null;
@@ -23,7 +24,7 @@ export async function resolveThumbnail(file: DAMFile): Promise<ThumbnailResult> 
   // Priority 1: Video preview frame (first frame as thumbnail)
   if (file.videoPreviewFrames?.length > 0) {
     result = {
-      url: `data:image/jpeg;base64,${file.videoPreviewFrames[0].frameData}`,
+      url: frameSrc(file.videoPreviewFrames[0]),
       source: 'firestore',
       cached: false
     };
