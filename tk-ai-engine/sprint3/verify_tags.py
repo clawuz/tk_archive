@@ -51,11 +51,9 @@ def ask(path, question):
 
 
 def frames_of(x):
-    fr = x.get("videoPreviewFrames") or []
-    if fr:
-        return [f["frameData"] for f in fr]
-    u = (x.get("thumbnail") or {}).get("url") or ""
-    return [u.split(",", 1)[1]] if u.startswith("data:") else []
+    # base64 (`frameData`) ya da Storage `url` — Phase B sonrası kareler url'de.
+    from process_real_batch import frame_list_for
+    return frame_list_for(x)
 
 
 def verified(x, tag):

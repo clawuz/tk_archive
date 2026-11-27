@@ -6,18 +6,48 @@ onun yerini aldı, yazma mantığı da ai_write.py'de tek yerde. Dosya adı
 geçmişe uyumluluk için aynı kaldı (worker/reprocess_* buradan import eder).
 """
 
+import base64
 import re
+import urllib.request
 from pathlib import Path
 
 
+def _fetch_b64(url, timeout=20):
+    """https Storage URL'sinden görseli indirip base64 string döndürür; hata → None."""
+    try:
+        req = urllib.request.Request(url, headers={"User-Agent": "tk-ai-engine"})
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            return base64.b64encode(r.read()).decode("ascii")
+    except Exception:
+        return None
+
+
+def _image_b64(ref):
+    """Bir kare/küçük resim referansından base64 üretir. Kare ya inline
+    `frameData` (eski, base64) ya da Cloud Storage `url` (Phase B sonrası)."""
+    if not ref:
+        return None
+    if ref.get("frameData"):
+        return ref["frameData"]
+    url = ref.get("url") or ref.get("storageUrl") or ""
+    if url.startswith("data:"):
+        return url.split(",", 1)[1]
+    if url.startswith("https://"):
+        return _fetch_b64(url)
+    return None
+
+
 def frame_list_for(file_data):
-    """Gerçek files/{fileId} dokümanından frameDataBase64List çıkarır."""
-    frames = file_data.get("videoPreviewFrames") or []
-    if frames:
-        return [f["frameData"] for f in frames]
-    thumb_url = (file_data.get("thumbnail") or {}).get("url") or ""
-    if thumb_url.startswith("data:"):
-        return [thumb_url.split(",", 1)[1]]
+    """Gerçek files/{fileId} dokümanından frameDataBase64List çıkarır.
+    Kareler base64 (`frameData`) ya da Storage `url` olabilir (Phase B)."""
+    out = [b for b in (_image_b64(f) for f in (file_data.get("videoPreviewFrames") or [])) if b]
+    if out:
+        return out
+    thumb = file_data.get("thumbnail") or {}
+    for ref in ({"url": thumb.get("url")}, {"url": thumb.get("storageUrl")}):
+        b = _image_b64(ref)
+        if b:
+            return [b]
     return []
 
 
